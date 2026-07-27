@@ -1,0 +1,42 @@
+# 原始数据（太大，不上传）
+data/
+
+# 模型权重文件（超过 GitHub 100MB 限制）
+*.pt
+
+# 压缩包
+*.rar
+*.zip
+*.7z
+*.tar.gz
+
+# YOLO 缓存
+*.cache
+
+# 文档
+野猪检测v1.docx
+
+# 数据集原始图片（只上传标签，不上传图片）
+work/dataset/train/images/
+work/dataset/val/images/
+work/merged/images/
+
+# 推理结果
+work/inference_results/
+
+# 自动标注临时文件
+work/auto_label/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.eggs/
+dist/
+build/
+*.egg
+
+# 系统文件
+.DS_Store
+Thumbs.db
