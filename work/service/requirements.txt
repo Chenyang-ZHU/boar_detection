@@ -1,0 +1,6 @@
+# 野猪检测 HTTP 服务依赖
+# 安装: pip install -r requirements.txt
+
+flask>=3.0
+ultralytics>=8.0
+pillow>=10.0
