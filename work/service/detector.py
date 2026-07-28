@@ -47,7 +47,7 @@ class BoarDetector:
         logger.info(f"模型加载完成，耗时 {elapsed:.2f}s")
 
     def _validate_and_decode(self, image_data: bytes) -> np.ndarray:
-        """校验图片数据并解码为 numpy 数组"""
+        """校验图片格式和尺寸，解码为 numpy 数组（保持原始分辨率）"""
         # 校验文件头魔术数
         if image_data.startswith(b'\xff\xd8'):
             fmt = "JPEG"
@@ -65,11 +65,12 @@ class BoarDetector:
         except Exception as e:
             raise ValueError(f"图片解码失败: {e}")
 
-        # 校验尺寸
-        if img.width != self.input_size or img.height != self.input_size:
+        # 校验尺寸：长边不得超过限制
+        max_side = max(img.width, img.height)
+        if max_side > config.MAX_IMAGE_SIZE:
             raise ValueError(
-                f"图片尺寸必须是 {self.input_size}×{self.input_size}，"
-                f"实际为 {img.width}×{img.height}"
+                f"图片尺寸过大（{img.width}×{img.height}），"
+                f"长边不能超过 {config.MAX_IMAGE_SIZE}px"
             )
 
         return np.array(img)
@@ -79,7 +80,7 @@ class BoarDetector:
         执行目标检测
 
         参数:
-            image_data: 图片二进制数据（JPEG/PNG/BMP, 640×640）
+            image_data: 图片二进制数据（JPEG/PNG/BMP, 长边 ≤ 1080px）
 
         返回:
             {
@@ -91,16 +92,23 @@ class BoarDetector:
                         "bbox": {"x1": 0.1, "y1": 0.2, "x2": 0.5, "y2": 0.6}
                     }
                 ],
-                "image_width": 640,
-                "image_height": 640,
+                "image_width": 1920,
+                "image_height": 1080,
                 "inference_time_ms": 95.3
             }
+
+        说明:
+            - bbox 坐标为归一化坐标（0~1），相对于原始图片尺寸
+            - 模型自动将输入缩放至 640×640 进行推理
+            - 调用方还原像素坐标：像素 = bbox × 对应边的原始像素值
         """
-        # 1. 校验并解码图片
+        # 1. 校验并解码图片（保持原始分辨率）
         img_array = self._validate_and_decode(image_data)
         img_height, img_width = img_array.shape[:2]
 
         # 2. 推理（加锁保证线程安全）
+        #    注：ultralytics 内部会自动将图片缩放到 640×640，
+        #    返回的 xyxyn 坐标相对于原始图片尺寸归一化
         t0 = time.time()
         with self._lock:
             results = self.model.predict(
@@ -112,7 +120,7 @@ class BoarDetector:
             )
         inference_ms = (time.time() - t0) * 1000
 
-        # 3. 解析结果
+        # 3. 解析结果（xyxyn 为相对于原始图像的归一化坐标）
         detections = []
         boxes = results[0].boxes
         if boxes is not None:

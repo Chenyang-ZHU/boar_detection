@@ -21,8 +21,11 @@ CONFIDENCE_THRESHOLD = 0.25
 # NMS IoU 阈值
 IOU_THRESHOLD = 0.45
 
-# 输入图片尺寸（固定 640×640）
+# 模型推理输入尺寸（YOLO 内部会自动缩放）
 INPUT_SIZE = 640
+
+# 接受的最大图片尺寸（宽或高的最大值，超出拒绝）
+MAX_IMAGE_SIZE = 1080
 
 # 最大同时推理线程数（Flask 多线程请求时的限制）
 MAX_INFERENCE_WORKERS = 4
