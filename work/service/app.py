@@ -23,51 +23,57 @@ logger.info("正在初始化野猪检测服务...")
 detector = BoarDetector()
 app_start_time = time.time()
 
-
-def make_success_response(data: dict) -> tuple:
-    """构造成功响应"""
-    return jsonify({"code": 0, "message": "success", "data": data})
+# 最大请求体大小（图像 + 视频上传）
+app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024  # 50MB
 
 
-def make_error_response(code: int, message: str) -> tuple:
-    """构造错误响应"""
-    return jsonify({"code": code, "message": message, "data": None})
+def make_error_response(status_code: int, code: int, message: str) -> tuple:
+    """构造错误响应（JSON）"""
+    return (
+        jsonify({"code": code, "message": message, "data": None}),
+        status_code,
+    )
+
+
+def make_media_response(data: bytes, content_type: str) -> tuple:
+    """构造媒体流成功响应"""
+    return (data, 200, {"Content-Type": content_type})
 
 
 # ---------------------------------------------------------------------------
-# POST /detect — multipart/form-data 方式
+# POST /detect — multipart/form-data 方式（图像）
 # ---------------------------------------------------------------------------
 @app.route("/detect", methods=["POST"])
 def detect_multipart():
     """
-    接收 multipart/form-data 方式上传的图片，执行目标检测。
+    接收 multipart/form-data 方式上传的图片，返回画了 bbox 的 JPEG 图片。
 
     请求字段:
-        image: 图片文件 (JPEG/PNG/BMP, 640×640)
+        image: 图片文件 (JPEG/PNG/BMP, 长边 ≤ 1080px)
 
     响应:
-        成功: {"code": 0, "message": "success", "data": {...}}
-        失败: {"code": 4xxxx/5xxxx, "message": "...", "data": null}
+        成功: HTTP 200, Content-Type: image/jpeg, body 为画框图片
+        失败: HTTP 4xx/5xx, body 为 JSON 错误信息
     """
     # 检查请求中是否包含图片
     if "image" not in request.files:
-        return make_error_response(40001, "请求中缺少 image 字段")
+        return make_error_response(400, 40001, "请求中缺少 image 字段")
 
     file = request.files["image"]
     if file.filename == "":
-        return make_error_response(40001, "上传的文件名为空")
+        return make_error_response(400, 40001, "上传的文件名为空")
 
     image_data = file.read()
-    return _detect(image_data)
+    return _detect_image(image_data)
 
 
 # ---------------------------------------------------------------------------
-# POST /detect/raw — 纯二进制方式
+# POST /detect/raw — 纯二进制方式（图像）
 # ---------------------------------------------------------------------------
 @app.route("/detect/raw", methods=["POST"])
 def detect_raw():
     """
-    接收纯二进制图片数据（body 直接为图片内容），执行目标检测。
+    接收纯二进制图片数据，返回画了 bbox 的 JPEG 图片。
 
     请求头:
         Content-Type: image/jpeg 或 image/png 或 image/bmp
@@ -76,39 +82,68 @@ def detect_raw():
         图片二进制数据
 
     响应:
-        成功: {"code": 0, "message": "success", "data": {...}}
-        失败: {"code": 4xxxx/5xxxx, "message": "...", "data": null}
+        成功: HTTP 200, Content-Type: image/jpeg, body 为画框图片
+        失败: HTTP 4xx/5xx, body 为 JSON 错误信息
     """
     image_data = request.get_data()
     if not image_data:
-        return make_error_response(40001, "请求体为空")
+        return make_error_response(400, 40001, "请求体为空")
 
-    # 校验 Content-Type
-    content_type = request.content_type or ""
-    if not any(fmt in content_type for fmt in ["image/jpeg", "image/png", "image/bmp", "image/x-"]):
-        logger.warning(f"未识别的 Content-Type: {content_type}，尝试自动识别格式")
-
-    return _detect(image_data)
+    return _detect_image(image_data)
 
 
-def _detect(image_data: bytes) -> tuple:
-    """统一的检测处理函数"""
+def _detect_image(image_data: bytes) -> tuple:
+    """统一的图像检测处理函数，返回画框 JPEG"""
     try:
-        result = detector.detect(image_data)
-        elapsed_ms = result["inference_time_ms"]
-        det_count = len(result["detections"])
-        logger.info(f"检测完成: {det_count} 个目标, 耗时 {elapsed_ms:.1f}ms")
-        return make_success_response(result)
+        jpeg_bytes = detector.detect_image(image_data)
+        return make_media_response(jpeg_bytes, "image/jpeg")
 
     except ValueError as e:
-        # 参数错误（图片格式不对、尺寸不对）— 业务异常
-        logger.warning(f"请求参数错误: {e}")
-        return make_error_response(40001, str(e))
+        # 参数错误（图片格式不对、尺寸不对）
+        logger.warning(f"图像请求参数错误: {e}")
+        return make_error_response(400, 40001, str(e))
 
     except Exception as e:
         # 服务端异常
-        logger.error(f"推理异常: {e}", exc_info=True)
-        return make_error_response(50001, f"模型推理失败: {str(e)}")
+        logger.error(f"图像推理异常: {e}", exc_info=True)
+        return make_error_response(500, 50001, f"模型推理失败: {str(e)}")
+
+
+# ---------------------------------------------------------------------------
+# POST /detect/video — 视频检测
+# ---------------------------------------------------------------------------
+@app.route("/detect/video", methods=["POST"])
+def detect_video():
+    """
+    接收视频文件，逐帧检测后返回画了 bbox 的 mp4 视频。
+
+    请求字段:
+        video: 视频文件 (mp4/avi/mov, ≤30秒, ≤50MB)
+
+    响应:
+        成功: HTTP 200, Content-Type: video/mp4, body 为画框视频
+        失败: HTTP 4xx/5xx, body 为 JSON 错误信息
+    """
+    if "video" not in request.files:
+        return make_error_response(400, 40001, "请求中缺少 video 字段")
+
+    file = request.files["video"]
+    if file.filename == "":
+        return make_error_response(400, 40001, "上传的文件名为空")
+
+    video_data = file.read()
+
+    try:
+        video_bytes = detector.detect_video(video_data)
+        return make_media_response(video_bytes, "video/mp4")
+
+    except ValueError as e:
+        logger.warning(f"视频请求参数错误: {e}")
+        return make_error_response(400, 40001, str(e))
+
+    except Exception as e:
+        logger.error(f"视频推理异常: {e}", exc_info=True)
+        return make_error_response(500, 50001, f"视频处理失败: {str(e)}")
 
 
 # ---------------------------------------------------------------------------
@@ -132,10 +167,11 @@ def health():
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
     logger.info(f"启动服务: http://{config.HOST}:{config.PORT}")
-    logger.info(f"接口列表:")
-    logger.info(f"  POST /detect      — multipart 方式上传图片")
-    logger.info(f"  POST /detect/raw   — 纯二进制方式上传图片")
-    logger.info(f"  GET  /health       — 健康检查")
+    logger.info("接口列表:")
+    logger.info("  POST /detect         — 图像检测 (multipart, 返回画框图)")
+    logger.info("  POST /detect/raw     — 图像检测 (纯二进制, 返回画框图)")
+    logger.info("  POST /detect/video   — 视频检测 (multipart, 返回画框视频)")
+    logger.info("  GET  /health          — 健康检查")
 
     app.run(
         host=config.HOST,

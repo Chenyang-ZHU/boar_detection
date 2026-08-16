@@ -27,6 +27,16 @@ INPUT_SIZE = 640
 # 接受的最大图片尺寸（宽或高的最大值，超出拒绝）
 MAX_IMAGE_SIZE = 1080
 
+# ---------- 视频处理 ----------
+# 视频最大大小（50MB）
+MAX_VIDEO_SIZE = 50 * 1024 * 1024
+# 视频最大时长（秒），覆盖 10/20 秒需求
+MAX_VIDEO_DURATION = 30
+# 视频长边最大尺寸，超过自动缩放
+MAX_VIDEO_SIDE = 1920
+# 视频编码策略："auto" 自动选择（优先 H.264，回退 mp4v）/ "mp4v" / "avc1"
+VIDEO_CODEC = "auto"
+
 # 最大同时推理线程数（Flask 多线程请求时的限制）
 MAX_INFERENCE_WORKERS = 4
 
