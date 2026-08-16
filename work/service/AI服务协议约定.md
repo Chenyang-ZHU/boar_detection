@@ -116,7 +116,7 @@ POST http://{host}:5000/detect/raw
 
 #### 请求体
 
-直接将 640×640 图片的二进制数据放在 HTTP body 中，不包裹任何格式。
+直接将图片的二进制数据放在 HTTP body 中，不包裹任何格式（图片规格见 2.3）。
 
 #### 请求示例
 
@@ -284,8 +284,8 @@ req.end();
 | 字段 | 类型 | 范围 | 说明 |
 |------|------|------|------|
 | detections | array | — | 检测结果列表，每项对应一个检测到的目标 |
-| image_width | int | 固定 640 | 输入图片宽度 |
-| image_height | int | 固定 640 | 输入图片高度 |
+| image_width | int | ≥ 1 | 输入图片原始宽度（像素） |
+| image_height | int | ≥ 1 | 输入图片原始高度（像素） |
 | inference_time_ms | float | ≥ 0 | 模型推理耗时，单位毫秒 |
 
 #### detections[] 元素
@@ -310,22 +310,22 @@ req.end();
 
 **还原为实际像素坐标：**
 ```
-像素_x1 = bbox.x1 × 图片宽度（640）
-像素_y1 = bbox.y1 × 图片高度（640）
-像素_x2 = bbox.x2 × 图片宽度（640）
-像素_y2 = bbox.y2 × 图片高度（640）
+像素_x1 = bbox.x1 × image_width
+像素_y1 = bbox.y1 × image_height
+像素_x2 = bbox.x2 × image_width
+像素_y2 = bbox.y2 × image_height
 ```
 
 示例：
 ```python
-# 假设返回的 bbox
+# 假设返回的 bbox 与图片尺寸
 bbox = {"x1": 0.10, "y1": 0.20, "x2": 0.50, "y2": 0.60}
-W, H = 640, 640   # 即 image_width, image_height
+W, H = 1920, 1080   # 即返回的 image_width, image_height
 
-pixel_x1 = int(bbox["x1"] * W)  # 64
-pixel_y1 = int(bbox["y1"] * H)  # 128
-pixel_x2 = int(bbox["x2"] * W)  # 320
-pixel_y2 = int(bbox["y2"] * H)  # 384
+pixel_x1 = int(bbox["x1"] * W)  # 192
+pixel_y1 = int(bbox["y1"] * H)  # 216
+pixel_x2 = int(bbox["x2"] * W)  # 960
+pixel_y2 = int(bbox["y2"] * H)  # 648
 ```
 
 ---
@@ -338,8 +338,8 @@ pixel_y2 = int(bbox["y2"] * H)  # 384
 
 ```json
 {
-  "code": 40004,
-  "message": "图片尺寸必须是 640×640，实际为 1920×1080",
+  "code": 40001,
+  "message": "图片尺寸过大（4000×3000），长边不能超过 1080px",
   "data": null
 }
 ```
@@ -351,15 +351,6 @@ pixel_y2 = int(bbox["y2"] * H)  # 384
 {
   "code": 40001,
   "message": "不支持的图片格式，仅支持 JPEG/PNG/BMP",
-  "data": null
-}
-```
-
-**40004 — 图片尺寸错误：**
-```json
-{
-  "code": 40004,
-  "message": "图片尺寸必须是 640×640，实际为 1920×1080",
   "data": null
 }
 ```
@@ -463,35 +454,17 @@ GET http://{host}:5000/health
 ### 6.3 坐标格式
 
 - 返回的 bbox 为**归一化坐标**（范围 0~1），而非原始像素坐标
-- 如需像素坐标，请按上述公式乘以图片宽高（640×640）还原
+- 如需像素坐标，请按上述公式乘以返回的 `image_width` / `image_height` 还原
 - 归一化的好处是分辨率变化时不需要修改接口返回值
 
 ### 6.4 并发说明
 
-- 服务端单线程 CPU 推理，单张图片约 100ms，约 **10 QPS**
-- 如需批量检测多张图片，建议调用方并发发送多个请求
-- 如果对性能有更高要求，服务方可启用 GPU 加速（需部署环境有 GPU），届时单张推理约 10~15ms
+- 推理耗时取决于部署硬件：纯 CPU 约 100ms/张，Jetson Orin（GPU）实测约 130~160ms/张
+- 服务端支持多线程并发请求，如需批量检测多张图片，建议调用方并发发送多个请求
+- 接口超时仍建议设置 30 秒作为安全余量（见 6.2）
 
-### 6.5 请求图片准备建议（图片缩放）
+### 6.5 图片缩放说明
 
-调用方在发送前，需要将原始图片缩放到 640×640。推荐做法：
+**调用方无需自行缩放图片。** 直接传入原始图片（JPEG/PNG/BMP，长边不超过 1080px）即可，服务端会自动缩放至 640×640 进行推理，返回的 bbox 坐标相对于原始图片尺寸归一化。
 
-```python
-import cv2
-
-def prepare_image(input_path, output_path):
-    """将任意尺寸图片缩放为 640×640（letterbox 方式）"""
-    img = cv2.imread(input_path)
-    h, w = img.shape[:2]
-    scale = 640 / max(h, w)
-    new_w, new_h = int(w * scale), int(h * scale)
-    resized = cv2.resize(img, (new_w, new_h))
-    
-    # 创建 640×640 黑色画布，将缩放后的图片居中放置
-    canvas = np.zeros((640, 640, 3), dtype=np.uint8)
-    y_offset = (640 - new_h) // 2
-    x_offset = (640 - new_w) // 2
-    canvas[y_offset:y_offset+new_h, x_offset:x_offset+new_w] = resized
-    
-    cv2.imwrite(output_path, canvas)
-```
+> 旧版本曾要求调用方先 letterbox 缩放到 640×640，现已取消。
