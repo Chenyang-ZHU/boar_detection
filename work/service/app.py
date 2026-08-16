@@ -35,9 +35,9 @@ def make_error_response(status_code: int, code: int, message: str) -> tuple:
     )
 
 
-def make_media_response(data: bytes, content_type: str) -> tuple:
-    """构造媒体流成功响应"""
-    return (data, 200, {"Content-Type": content_type})
+def make_media_response(data: bytes, headers: dict) -> tuple:
+    """构造媒体流成功响应（headers 需含 Content-Type）"""
+    return (data, 200, headers)
 
 
 # ---------------------------------------------------------------------------
@@ -93,10 +93,17 @@ def detect_raw():
 
 
 def _detect_image(image_data: bytes) -> tuple:
-    """统一的图像检测处理函数，返回画框 JPEG"""
+    """统一的图像检测处理函数，返回画框 JPEG + 原始尺寸响应头"""
     try:
-        jpeg_bytes = detector.detect_image(image_data)
-        return make_media_response(jpeg_bytes, "image/jpeg")
+        jpeg_bytes, meta = detector.detect_image(image_data)
+        headers = {
+            "Content-Type": "image/jpeg",
+            "X-Original-Width": str(meta["original_width"]),
+            "X-Original-Height": str(meta["original_height"]),
+        }
+        if meta.get("scale_info"):
+            headers["X-Scale-Info"] = meta["scale_info"]
+        return make_media_response(jpeg_bytes, headers)
 
     except ValueError as e:
         # 参数错误（图片格式不对、尺寸不对）
@@ -134,8 +141,17 @@ def detect_video():
     video_data = file.read()
 
     try:
-        video_bytes = detector.detect_video(video_data)
-        return make_media_response(video_bytes, "video/mp4")
+        video_bytes, meta = detector.detect_video(video_data)
+        headers = {
+            "Content-Type": "video/mp4",
+            "X-Original-Width": str(meta["original_width"]),
+            "X-Original-Height": str(meta["original_height"]),
+            "X-Original-Duration": str(meta["original_duration"]),
+            "X-Original-Size": str(meta["original_size"]),
+        }
+        if meta.get("scale_info"):
+            headers["X-Scale-Info"] = meta["scale_info"]
+        return make_media_response(video_bytes, headers)
 
     except ValueError as e:
         logger.warning(f"视频请求参数错误: {e}")

@@ -1,7 +1,7 @@
 # AI 服务协议约定
 
-> 版本：v1.1  
-> 最后更新：2026-07-27
+> 版本：v2.0（画框图片/视频返回）  
+> 最后更新：2026-08-16
 
 ---
 
@@ -10,391 +10,203 @@
 | 环境 | 地址 |
 |------|------|
 | 本地开发 | `http://127.0.0.1:5000` |
-| 生产环境 | 待定 |
+| 局域网（Jetson） | `http://192.168.1.55:5000` |
+| 公网（ngrok） | `https://stopper-trimmer-tavern.ngrok-free.dev` |
 
 ---
 
-## 2. 野猪检测接口
+## 2. 接口一览
 
-服务提供两种请求方式，调用方可任选其一：
+| 接口 | 方法 | 请求 | 成功响应 |
+|------|------|------|---------|
+| `/detect` | POST | multipart，字段 `image` | **画框 JPEG 图片** |
+| `/detect/raw` | POST | 纯二进制，`Content-Type: image/*` | **画框 JPEG 图片** |
+| `/detect/video` | POST | multipart，字段 `video` | **画框 MP4 视频** |
+| `/health` | GET | 无 | JSON 健康状态 |
 
-| 接口 | 方式 | 适用场景 |
-|------|------|---------|
-| `POST /detect` | multipart/form-data | 需要附带额外参数（摄像头ID、时间戳等） |
-| `POST /detect/raw` | 纯二进制（raw） | 只传图片，简单直接 |
-
-两种接口的**响应格式完全一致**。
+> **成功响应是媒体文件（画框图片/视频），不再是 JSON 坐标。** 调用方把响应 body 直接存成 `.jpg` / `.mp4` 文件即可。
+>
+> **错误时返回 HTTP 4xx/5xx + JSON**（见第 5 节）。
 
 ---
 
-### 2.1 方式一：POST /detect（multipart）
+## 3. 图像检测
 
-#### 接口说明
+### 3.1 POST /detect（multipart）
 
-标准 HTTP 文件上传方式，适合需要附带额外字段的场景。
+#### 请求
 
-#### 请求地址
+标准 HTTP 文件上传：
 
-```
-POST http://{host}:5000/detect
-```
-
-#### 请求头
-
-| 请求头 | 值 | 说明 |
-|--------|-----|------|
-| Content-Type | `multipart/form-data; boundary=----xxxx` | 标准文件上传格式，boundary 由调用方 HTTP 库自动生成 |
-
-#### 请求字段
-
-| 字段 | 位置 | 类型 | 必填 | 说明 |
-|------|------|------|------|------|
-| `image` | body | file | 是 | 待检测的图片文件 |
-
-#### 请求示例
-
-**Python：**
-```python
-import requests
-
-url = "http://127.0.0.1:5000/detect"
-resp = requests.post(url, files={"image": open("capture_640.jpg", "rb")})
-data = resp.json()
-```
-
-**curl：**
 ```bash
-curl -X POST http://127.0.0.1:5000/detect \
-  -F "image=@capture_640.jpg"
+curl -X POST http://{host}:5000/detect \
+  -F "image=@图片路径.jpg"
 ```
 
-**Java（OkHttp）：**
-```java
-OkHttpClient client = new OkHttpClient();
-RequestBody body = new MultipartBody.Builder()
-    .setType(MultipartBody.FORM)
-    .addFormDataPart("image", "capture.jpg",
-        RequestBody.create(MediaType.parse("image/jpeg"), new File("capture_640.jpg")))
-    .build();
-Request request = new Request.Builder()
-    .url("http://127.0.0.1:5000/detect")
-    .post(body)
-    .build();
-Response resp = client.newCall(request).execute();
-```
-
-**C#：**
-```csharp
-using var httpClient = new HttpClient();
-using var formData = new MultipartFormDataContent();
-var imageContent = new ByteArrayContent(File.ReadAllBytes("capture_640.jpg"));
-imageContent.Headers.ContentType = new MediaTypeHeaderValue("image/jpeg");
-formData.Add(imageContent, "image", "capture_640.jpg");
-var resp = await httpClient.PostAsync("http://127.0.0.1:5000/detect", formData);
-var json = await resp.Content.ReadAsStringAsync();
-```
-
----
-
-### 2.2 方式二：POST /detect/raw（纯二进制）
-
-#### 接口说明
-
-适用于监控平台等直接从内存获取图片的场景。**图片数据直接放在 HTTP body 中发送**，没有任何包装，调用方代码最简洁。
-
-#### 请求地址
-
-```
-POST http://{host}:5000/detect/raw
-```
-
-#### 请求头
-
-| 请求头 | 值 | 说明 |
-|--------|-----|------|
-| Content-Type | `image/jpeg` 或 `image/png` 或 `image/bmp` | **必填**，告知服务端图片编码格式 |
-
-#### 请求体
-
-直接将图片的二进制数据放在 HTTP body 中，不包裹任何格式（图片规格见 2.3）。
-
-#### 请求示例
-
-**Python（从摄像头内存数据直接发）：**
 ```python
 import requests
-
-# 直接从摄像头 SDK 拿到图片 bytes（不落盘）
-image_data = camera_sdk.get_frame()  # bytes, 640×640 JPEG
-
 resp = requests.post(
-    "http://127.0.0.1:5000/detect/raw",
-    data=image_data,
-    headers={"Content-Type": "image/jpeg"}
+    "http://{host}:5000/detect",
+    files={"image": open("图片路径.jpg", "rb")},
+    timeout=30,
 )
-data = resp.json()
+if resp.status_code == 200:
+    with open("result.jpg", "wb") as f:
+        f.write(resp.content)   # 画框图片字节
+else:
+    print(resp.json())          # 错误 JSON
 ```
 
-**Python（从文件发）：**
-```python
-import requests
+#### 响应
 
-with open("capture_640.jpg", "rb") as f:
-    image_data = f.read()
+- **成功（HTTP 200）**：`Content-Type: image/jpeg`，body 为画框后的 JPEG 图片；未检测到目标时返回原图。
 
-resp = requests.post(
-    "http://127.0.0.1:5000/detect/raw",
-    data=image_data,
-    headers={"Content-Type": "image/jpeg"}
-)
-```
+  响应头（返回原始数据大小信息）：
 
-**curl：**
+  | 响应头 | 说明 |
+  |--------|------|
+  | `X-Original-Width` | 原始图片宽度（像素） |
+  | `X-Original-Height` | 原始图片高度（像素） |
+  | `X-Scale-Info` | （仅当自动缩放时）原始→处理的尺寸，如 `original 4000x3000 -> 2560x1920` |
+
+- **失败（HTTP 4xx/5xx）**：JSON，见第 5 节。
+
+### 3.2 POST /detect/raw（纯二进制）
+
+#### 请求
+
+图片二进制直接放在 body 中，适用于摄像头内存数据等场景：
+
 ```bash
-curl -X POST http://127.0.0.1:5000/detect/raw \
+curl -X POST http://{host}:5000/detect/raw \
   -H "Content-Type: image/jpeg" \
-  --data-binary @capture_640.jpg
+  --data-binary @图片路径.jpg
 ```
 
-**Java：**
-```java
-URL url = new URL("http://127.0.0.1:5000/detect/raw");
-HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-conn.setRequestMethod("POST");
-conn.setRequestProperty("Content-Type", "image/jpeg");
-conn.setDoOutput(true);
-
-byte[] imageBytes = Files.readAllBytes(Paths.get("capture_640.jpg"));
-conn.getOutputStream().write(imageBytes);
-
-int code = conn.getResponseCode();
-// 读取响应...
-```
-
-**C#：**
-```csharp
-using var httpClient = new HttpClient();
-var imageBytes = File.ReadAllBytes("capture_640.jpg");
-var content = new ByteArrayContent(imageBytes);
-content.Headers.ContentType = new MediaTypeHeaderValue("image/jpeg");
-var resp = await httpClient.PostAsync("http://127.0.0.1:5000/detect/raw", content);
-var json = await resp.Content.ReadAsStringAsync();
-```
-
-**Node.js：**
-```javascript
-const fs = require('fs');
-const http = require('http');
-
-const imageBuffer = fs.readFileSync('capture_640.jpg');
-const options = {
-  hostname: '127.0.0.1',
-  port: 5000,
-  path: '/detect/raw',
-  method: 'POST',
-  headers: {
-    'Content-Type': 'image/jpeg',
-    'Content-Length': imageBuffer.length
-  }
-};
-const req = http.request(options, res => {
-  let data = '';
-  res.on('data', chunk => data += chunk);
-  res.on('end', () => console.log(JSON.parse(data)));
-});
-req.write(imageBuffer);
-req.end();
-```
-
----
-
-### 2.3 图片规格（两种方式共用）
-
-| 项目 | 要求 |
-|------|------|
-| 格式 | JPEG、PNG、BMP |
-| 尺寸 | **长边不超过 1080px**，任意比例均可（服务端自动缩放至 640×640 进行推理） |
-| 颜色空间 | RGB 或 BGR 均可 |
-| 文件大小 | 建议控制在 1MB 以内 |
-
-> 旧版本要求严格 640×640，现已取消。调用方无需自行缩放，**直接传入原始图片即可**。
-
----
-
-### 2.4 成功响应
-
-#### 检测到目标
-
-```json
-{
-  "code": 0,
-  "message": "success",
-  "data": {
-    "detections": [
-      {
-        "class": "boar",
-        "class_id": 0,
-        "confidence": 0.934,
-        "bbox": {
-          "x1": 0.10,
-          "y1": 0.20,
-          "x2": 0.50,
-          "y2": 0.60
-        }
-      }
-    ],
-    "image_width": 640,
-    "image_height": 640,
-    "inference_time_ms": 95.3
-  }
-}
-```
-
-#### 未检测到目标
-
-图片中没有野猪时，`detections` 字段返回空数组：
-
-```json
-{
-  "code": 0,
-  "message": "success",
-  "data": {
-    "detections": [],
-    "image_width": 640,
-    "image_height": 640,
-    "inference_time_ms": 98.1
-  }
-}
-```
-
----
-
-### 2.5 响应字段说明
-
-#### 外层字段
-
-| 字段 | 类型 | 范围 | 说明 |
-|------|------|------|------|
-| code | int | 见错误码表 | 业务状态码，0 表示成功 |
-| message | string | — | 状态描述，成功时为 "success" |
-| data | object / null | — | 业务数据，成功时返回数据，失败时为 null |
-
-#### data 字段
-
-| 字段 | 类型 | 范围 | 说明 |
-|------|------|------|------|
-| detections | array | — | 检测结果列表，每项对应一个检测到的目标 |
-| image_width | int | ≥ 1 | 输入图片原始宽度（像素） |
-| image_height | int | ≥ 1 | 输入图片原始高度（像素） |
-| inference_time_ms | float | ≥ 0 | 模型推理耗时，单位毫秒 |
-
-#### detections[] 元素
-
-| 字段 | 类型 | 范围 | 说明 |
-|------|------|------|------|
-| class | string | "boar" | 目标类别名称 |
-| class_id | int | 0 | 目标类别 ID（目前仅 boar 一个类别） |
-| confidence | float | 0~1 | 置信度，越接近 1 表示模型越确信是野猪 |
-| bbox | object | 见下 | 检测框坐标，**归一化坐标**（范围 0~1） |
-
-#### bbox 字段
-
-| 字段 | 类型 | 范围 | 说明 |
-|------|------|------|------|
-| x1 | float | 0~1 | 检测框左上角 X 坐标（归一化） |
-| y1 | float | 0~1 | 检测框左上角 Y 坐标（归一化） |
-| x2 | float | 0~1 | 检测框右下角 X 坐标（归一化） |
-| y2 | float | 0~1 | 检测框右下角 Y 坐标（归一化） |
-
-**坐标说明：** 所有 bbox 均为归一化坐标（范围 0~1），相对于图片宽高比例。
-
-**还原为实际像素坐标：**
-```
-像素_x1 = bbox.x1 × image_width
-像素_y1 = bbox.y1 × image_height
-像素_x2 = bbox.x2 × image_width
-像素_y2 = bbox.y2 × image_height
-```
-
-示例：
 ```python
-# 假设返回的 bbox 与图片尺寸
-bbox = {"x1": 0.10, "y1": 0.20, "x2": 0.50, "y2": 0.60}
-W, H = 1920, 1080   # 即返回的 image_width, image_height
-
-pixel_x1 = int(bbox["x1"] * W)  # 192
-pixel_y1 = int(bbox["y1"] * H)  # 216
-pixel_x2 = int(bbox["x2"] * W)  # 960
-pixel_y2 = int(bbox["y2"] * H)  # 648
+import requests
+image_data = camera_sdk.get_frame()  # bytes
+resp = requests.post(
+    "http://{host}:5000/detect/raw",
+    data=image_data,
+    headers={"Content-Type": "image/jpeg"},
+    timeout=30,
+)
+if resp.status_code == 200:
+    with open("result.jpg", "wb") as f:
+        f.write(resp.content)
 ```
+
+#### 响应
+
+与 `/detect` 完全一致（画框 JPEG + 原始尺寸响应头）。
 
 ---
 
-### 2.6 错误响应
+## 4. 视频检测
 
-所有错误响应统一通过 HTTP 200 返回，调用方通过 `code` 字段区分业务状态。
+### 4.1 POST /detect/video
 
-#### 格式
+#### 请求
+
+```bash
+curl -X POST http://{host}:5000/detect/video \
+  -m 120 \
+  -F "video=@视频路径.mp4"
+```
+
+```python
+import requests
+resp = requests.post(
+    "http://{host}:5000/detect/video",
+    files={"video": open("视频路径.mp4", "rb")},
+    timeout=120,
+)
+if resp.status_code == 200:
+    with open("result.mp4", "wb") as f:
+        f.write(resp.content)
+else:
+    print(resp.json())
+```
+
+#### 响应
+
+- **成功（HTTP 200）**：`Content-Type: video/mp4`，body 为逐帧画框后的 MP4 视频。
+
+  响应头：
+
+  | 响应头 | 说明 |
+  |--------|------|
+  | `X-Original-Width` | 原始视频帧宽（像素） |
+  | `X-Original-Height` | 原始视频帧高（像素） |
+  | `X-Original-Duration` | 原始时长（秒） |
+  | `X-Original-Size` | 原始文件大小（字节） |
+  | `X-Scale-Info` | （仅当自动缩放时）原始→处理的尺寸 |
+
+- **失败（HTTP 4xx/5xx）**：JSON，见第 5 节。
+
+---
+
+## 5. 错误响应
+
+**错误时返回 HTTP 4xx/5xx + JSON**：
 
 ```json
 {
   "code": 40001,
-  "message": "图片尺寸过大（4000×3000），长边不能超过 1080px",
+  "message": "图片过大（原始尺寸 9000×6000，原始数据大小 0.8MB），长边超过 8192px，请先压缩",
   "data": null
 }
 ```
 
-#### 各错误码的响应示例
+| HTTP 状态 | code | 含义 | 处理方法 |
+|----------|------|------|---------|
+| 400 | `40001` | 参数错误：格式不支持、尺寸/大小超限、时长超限、缺字段 | 按 message 提示修正 |
+| 500 | `50001` | 模型推理/处理异常 | 稍后重试，持续失败请联系服务方 |
 
-**40001 — 不支持的图片格式：**
-```json
-{
-  "code": 40001,
-  "message": "不支持的图片格式，仅支持 JPEG/PNG/BMP",
-  "data": null
-}
-```
-
-**50001 — 模型推理异常：**
-```json
-{
-  "code": 50001,
-  "message": "模型推理失败: CUDA out of memory",
-  "data": null
-}
-```
+> 调用方应根据 **HTTP 状态码** 判断成功与否（2xx 成功，4xx/5xx 失败），错误详情在 JSON 的 `message` 中。
 
 ---
 
-## 3. 健康检查 — GET /health
+## 6. 媒体规格（接受任意尺寸，自动缩放）
 
-### 3.1 接口说明
+### 6.1 图片
 
-用于探测服务是否存活，以及获取服务基本信息。
+| 项目 | 规则 |
+|------|------|
+| 格式 | JPEG、PNG、BMP（按文件头魔数识别） |
+| 尺寸 | **接受任意尺寸**；长边 > 2560px 时服务端**自动缩放**到 2560px 后检测 |
+| 上限 | 长边 > 8192px 或文件 > 50MB → 返回 `40001` 说明（含原始尺寸） |
+| 输出 | 画框 JPEG（质量 90） |
 
-#### 请求地址
+### 6.2 视频
+
+| 项目 | 规则 |
+|------|------|
+| 格式 | mp4 / avi / mov / mkv 等（OpenCV/FFmpeg 可解码） |
+| 尺寸 | **接受任意尺寸/时长**；帧长边 > 2560px 时**自动缩放**后检测 |
+| 上限 | 文件 > 500MB 或时长 > 300 秒 → 返回 `40001` 说明（含原始时长/大小） |
+| 输出 | 逐帧画框 MP4（编码优先 H.264，回退 mp4v） |
+
+> **调用方无需自行缩放**：直接传原始图片/视频即可，服务端自动处理，并在响应头返回原始尺寸信息。
+
+---
+
+## 7. 健康检查 — GET /health
 
 ```
 GET http://{host}:5000/health
 ```
-
-#### 请求参数
-
-无。
-
-#### 成功响应
 
 ```json
 {
   "status": "ok",
   "model_loaded": true,
   "model": "yolov8n_merged_final",
-  "device": "cpu",
+  "device": "cuda:0",
   "uptime_seconds": 3600
 }
 ```
-
-#### 字段说明
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
@@ -406,65 +218,24 @@ GET http://{host}:5000/health
 
 ---
 
-## 4. 错误码
+## 8. 调用方注意事项
 
-| code | 含义 | HTTP 状态码 | 调用方处理建议 |
-|------|------|------------|---------------|
-| 0 | 成功 | 200 | — |
-| 40001 | 不支持的图片格式或图片过大 | 200 | 确保图片为 JPEG/PNG/BMP，长边不超过 1080px |
-| 50001 | 模型推理异常 | 200 | 稍后重试，若持续失败请联系服务方 |
-| 50002 | 服务器内部错误 | 200 | 稍后重试，若持续失败请联系服务方 |
+### 8.1 超时设置
 
-> 所有响应均为 HTTP 200，以 `code` 字段区分业务状态。调用方应根据 `code` 做业务逻辑判断，不要依赖 HTTP 状态码。
+| 接口 | 建议超时 |
+|------|---------|
+| `/detect`、`/detect/raw` | 30 秒 |
+| `/detect/video` | 120 秒 |
 
----
+> 单张图片 Jetson GPU 推理约 130~160ms；视频逐帧检测约 46ms/帧，30 秒视频约需 40 秒处理。
 
-## 5. 两种方式对比
+### 8.2 输出文件
 
-| 对比项 | POST /detect（multipart） | POST /detect/raw（纯二进制） |
-|--------|--------------------------|----------------------------|
-| 请求体 | 图片 + 表单包装（多几百字节） | 只有图片二进制数据 |
-| 请求头 | `Content-Type: multipart/form-data` | `Content-Type: image/jpeg` |
-| 附带额外字段 | ✅ 方便扩展（如 camera_id） | ❌ 不支持 |
-| 调用方代码量 | 稍多 | 最简洁 |
-| 适用场景 | 需要传图片以外的参数 | 只传图片，简单直接 |
+- 图像成功响应：直接把 body 存成 `.jpg`
+- 视频成功响应：直接把 body 存成 `.mp4`
 
-> 建议：如果只需要传图片，优先使用 `/detect/raw`。
+### 8.3 原始尺寸信息
 
----
-
-## 6. 调用方注意事项
-
-### 6.1 图片尺寸
-
-- 传入图片**长边不超过 1080px**，任意比例均可
-- 服务端会自动将图片缩放至 640×640 进行推理，**调用方无需自行缩放**
-- 返回的 bbox 坐标为**相对于原始图片尺寸**的归一化坐标，调用方按需还原
-- 如果图片超出限制，服务端将返回 `code: 40001`
-
-### 6.2 超时设置
-
-| 场景 | 建议超时时间 |
-|------|------------|
-| 正常推理 | 5 秒 |
-| 网络波动 | 30 秒（推荐） |
-
-单张图片 CPU 推理耗时约 100 毫秒，建议调用方设置 30 秒超时作为安全余量。
-
-### 6.3 坐标格式
-
-- 返回的 bbox 为**归一化坐标**（范围 0~1），而非原始像素坐标
-- 如需像素坐标，请按上述公式乘以返回的 `image_width` / `image_height` 还原
-- 归一化的好处是分辨率变化时不需要修改接口返回值
-
-### 6.4 并发说明
-
-- 推理耗时取决于部署硬件：纯 CPU 约 100ms/张，Jetson Orin（GPU）实测约 130~160ms/张
-- 服务端支持多线程并发请求，如需批量检测多张图片，建议调用方并发发送多个请求
-- 接口超时仍建议设置 30 秒作为安全余量（见 6.2）
-
-### 6.5 图片缩放说明
-
-**调用方无需自行缩放图片。** 直接传入原始图片（JPEG/PNG/BMP，长边不超过 1080px）即可，服务端会自动缩放至 640×640 进行推理，返回的 bbox 坐标相对于原始图片尺寸归一化。
-
-> 旧版本曾要求调用方先 letterbox 缩放到 640×640，现已取消。
+- 响应头 `X-Original-Width` / `X-Original-Height` 始终返回输入图片/视频的原始像素尺寸
+- 若发生自动缩放，`X-Scale-Info` 说明缩放前后尺寸
+- 视频额外提供 `X-Original-Duration`（秒）和 `X-Original-Size`（字节）

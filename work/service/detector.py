@@ -97,7 +97,7 @@ class BoarDetector:
     # 图像检测：返回画框 JPEG
     # ------------------------------------------------------------------
     def _validate_and_decode(self, image_data: bytes) -> np.ndarray:
-        """校验图片格式和尺寸，解码为 RGB numpy 数组（保持原始分辨率）"""
+        """校验图片格式，解码为 RGB numpy 数组（保持原始分辨率，尺寸不限）"""
         # 校验文件头魔术数
         if image_data.startswith(b'\xff\xd8'):
             fmt = "JPEG"
@@ -108,53 +108,88 @@ class BoarDetector:
         else:
             raise ValueError("不支持的图片格式，仅支持 JPEG/PNG/BMP")
 
-        # 解码
+        # 解码（接受任意尺寸，尺寸限制由 detect_image 统一处理）
         try:
             img = Image.open(BytesIO(image_data))
             img = img.convert("RGB")
         except Exception as e:
             raise ValueError(f"图片解码失败: {e}")
 
-        # 校验尺寸：长边不得超过限制
-        max_side = max(img.width, img.height)
-        if max_side > config.MAX_IMAGE_SIZE:
-            raise ValueError(
-                f"图片尺寸过大（{img.width}×{img.height}），"
-                f"长边不能超过 {config.MAX_IMAGE_SIZE}px"
-            )
-
         return np.array(img)
 
-    def detect_image(self, image_data: bytes) -> bytes:
+    def detect_image(self, image_data: bytes) -> tuple:
         """
-        图像目标检测，返回画了 bbox 的 JPEG 图片字节
+        图像目标检测，返回画了 bbox 的 JPEG 图片字节和原始尺寸信息。
+
+        接受任意尺寸图片；长边超过 IMAGE_AUTO_SCALE_SIDE 自动缩放后检测；
+        超过 IMAGE_HARD_LIMIT_SIDE 或文件过大时抛出 ValueError（含原始尺寸说明）。
 
         参数:
-            image_data: 图片二进制数据（JPEG/PNG/BMP, 长边 ≤ 1080px）
+            image_data: 图片二进制数据（JPEG/PNG/BMP，任意尺寸）
 
         返回:
-            画框 JPEG 图片字节（未检测到目标时返回原图）
+            (画框 JPEG 图片字节, meta字典)，meta 含 original_width/original_height/
+            processed_width/processed_height/scaled/scale_info
         """
-        # 1. 解码（RGB）
-        img_rgb = self._validate_and_decode(image_data)
-        img_bgr = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2BGR)
+        # 0. 文件大小校验（超出上限返回说明）
+        if len(image_data) > config.IMAGE_MAX_FILE_BYTES:
+            raise ValueError(
+                f"图片文件过大（{len(image_data) / 1024 / 1024:.1f}MB，原始数据大小），"
+                f"超过处理上限 {config.IMAGE_MAX_FILE_BYTES / 1024 / 1024:.0f}MB"
+            )
 
-        # 2. 推理
+        # 1. 解码（RGB，保持原始分辨率）
+        img_rgb = self._validate_and_decode(image_data)
+        orig_h, orig_w = img_rgb.shape[:2]
+
+        # 硬上限：长边过大则返回说明（含原始尺寸）
+        orig_max_side = max(orig_w, orig_h)
+        if orig_max_side > config.IMAGE_HARD_LIMIT_SIDE:
+            raise ValueError(
+                f"图片过大（原始尺寸 {orig_w}×{orig_h}，原始数据大小 "
+                f"{len(image_data) / 1024 / 1024:.1f}MB），长边超过 "
+                f"{config.IMAGE_HARD_LIMIT_SIDE}px，请先压缩"
+            )
+
+        # 2. 自动缩放（长边超过阈值）
+        processed = img_rgb
+        proc_h, proc_w = orig_h, orig_w
+        scale_info = None
+        if orig_max_side > config.IMAGE_AUTO_SCALE_SIDE:
+            scale = config.IMAGE_AUTO_SCALE_SIDE / orig_max_side
+            proc_w, proc_h = int(orig_w * scale), int(orig_h * scale)
+            processed = cv2.resize(img_rgb, (proc_w, proc_h))
+            scale_info = f"original {orig_w}x{orig_h} -> {proc_w}x{proc_h}"
+
+        # 3. 推理
         t0 = time.time()
-        result = self._infer(img_rgb)
+        result = self._infer(processed)
         inference_ms = (time.time() - t0) * 1000
 
-        # 3. 画框
+        # 4. 画框（BGR）
+        img_bgr = cv2.cvtColor(processed, cv2.COLOR_RGB2BGR)
         img_bgr = self._draw_boxes(img_bgr, result)
 
-        # 4. 编码为 JPEG
+        # 5. 编码为 JPEG
         ok, buf = cv2.imencode(".jpg", img_bgr, [cv2.IMWRITE_JPEG_QUALITY, 90])
         if not ok:
             raise ValueError("图片编码失败")
 
         det_count = 0 if result.boxes is None else len(result.boxes)
-        logger.info(f"图像检测完成: {det_count} 个目标, 耗时 {inference_ms:.1f}ms")
-        return buf.tobytes()
+        logger.info(
+            f"图像检测完成: {det_count} 个目标, 原始 {orig_w}×{orig_h}, "
+            f"处理 {proc_w}×{proc_h}, 耗时 {inference_ms:.1f}ms"
+        )
+
+        meta = {
+            "original_width": orig_w,
+            "original_height": orig_h,
+            "processed_width": proc_w,
+            "processed_height": proc_h,
+            "scaled": scale_info is not None,
+            "scale_info": scale_info,
+        }
+        return buf.tobytes(), meta
 
     # ------------------------------------------------------------------
     # 视频检测：逐帧返回画框 mp4
@@ -175,26 +210,25 @@ class BoarDetector:
         # 兜底
         return cv2.VideoWriter_fourcc(*"mp4v")
 
-    def detect_video(self, video_data: bytes) -> bytes:
+    def detect_video(self, video_data: bytes) -> tuple:
         """
-        视频逐帧目标检测，返回画了 bbox 的 mp4 视频字节
+        视频逐帧目标检测，返回画了 bbox 的 mp4 视频字节和原始信息。
+
+        接受任意尺寸/时长视频；帧长边超过 VIDEO_AUTO_SCALE_SIDE 自动缩放；
+        文件超过 VIDEO_MAX_SIZE 或时长超过 VIDEO_MAX_DURATION 时抛出 ValueError（含原始信息）。
 
         参数:
-            video_data: 视频二进制数据（mp4/avi/mov）
+            video_data: 视频二进制数据（mp4/avi/mov，任意尺寸）
 
         返回:
-            逐帧画框 mp4 视频字节
-
-        限制:
-            - 大小 ≤ config.MAX_VIDEO_SIZE
-            - 时长 ≤ config.MAX_VIDEO_DURATION 秒
-            - 长边 > config.MAX_VIDEO_SIDE 自动缩放
+            (画框 mp4 视频字节, meta字典)，meta 含 original_width/original_height/
+            original_duration/original_size/scaled/scale_info
         """
-        # 大小校验
-        if len(video_data) > config.MAX_VIDEO_SIZE:
+        # 0. 文件大小校验（超出上限返回说明，含原始大小）
+        if len(video_data) > config.VIDEO_MAX_SIZE:
             raise ValueError(
-                f"视频过大（{len(video_data) / 1024 / 1024:.1f}MB），"
-                f"不能超过 {config.MAX_VIDEO_SIZE / 1024 / 1024:.0f}MB"
+                f"视频文件过大（{len(video_data) / 1024 / 1024:.1f}MB，原始数据大小），"
+                f"超过处理上限 {config.VIDEO_MAX_SIZE / 1024 / 1024:.0f}MB"
             )
 
         tmp_in = None
@@ -216,23 +250,26 @@ class BoarDetector:
             height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
             total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
-            # 2. 校验时长
+            # 2. 校验时长（超出上限返回说明，含原始时长）
             duration = total_frames / fps if fps > 0 else 0
-            if duration > config.MAX_VIDEO_DURATION:
+            if duration > config.VIDEO_MAX_DURATION:
                 raise ValueError(
-                    f"视频时长 {duration:.1f} 秒超过限制 "
-                    f"{config.MAX_VIDEO_DURATION} 秒"
+                    f"视频时长 {duration:.1f} 秒超过处理上限 "
+                    f"{config.VIDEO_MAX_DURATION} 秒（原始时长 {duration:.1f}s，"
+                    f"原始数据大小 {len(video_data) / 1024 / 1024:.1f}MB）"
                 )
             if width <= 0 or height <= 0:
                 raise ValueError("视频尺寸无效")
 
-            # 3. 计算输出尺寸（长边超过限制则缩放）
+            # 3. 计算输出尺寸（帧长边超过阈值则自动缩放）
             out_width, out_height = width, height
             max_side = max(width, height)
-            if max_side > config.MAX_VIDEO_SIDE:
-                scale = config.MAX_VIDEO_SIDE / max_side
+            scale_info = None
+            if max_side > config.VIDEO_AUTO_SCALE_SIDE:
+                scale = config.VIDEO_AUTO_SCALE_SIDE / max_side
                 out_width = int(width * scale)
                 out_height = int(height * scale)
+                scale_info = f"original {width}x{height} -> {out_width}x{out_height}"
 
             logger.info(
                 f"视频处理: {width}×{height}, {fps:.0f}fps, "
@@ -287,7 +324,19 @@ class BoarDetector:
             cap = None
 
             with open(tmp_out, "rb") as f:
-                return f.read()
+                video_bytes = f.read()
+
+            meta = {
+                "original_width": width,
+                "original_height": height,
+                "original_duration": round(duration, 2),
+                "original_size": len(video_data),
+                "processed_width": out_width,
+                "processed_height": out_height,
+                "scaled": scale_info is not None,
+                "scale_info": scale_info,
+            }
+            return video_bytes, meta
 
         finally:
             if writer is not None:
