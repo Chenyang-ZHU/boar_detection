@@ -101,8 +101,6 @@ def _detect_image(image_data: bytes) -> tuple:
             "X-Original-Width": str(meta["original_width"]),
             "X-Original-Height": str(meta["original_height"]),
         }
-        if meta.get("scale_info"):
-            headers["X-Scale-Info"] = meta["scale_info"]
         return make_media_response(jpeg_bytes, headers)
 
     except ValueError as e:
@@ -149,8 +147,6 @@ def detect_video():
             "X-Original-Duration": str(meta["original_duration"]),
             "X-Original-Size": str(meta["original_size"]),
         }
-        if meta.get("scale_info"):
-            headers["X-Scale-Info"] = meta["scale_info"]
         return make_media_response(video_bytes, headers)
 
     except ValueError as e:

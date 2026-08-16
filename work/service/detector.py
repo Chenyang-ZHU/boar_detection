@@ -121,15 +121,15 @@ class BoarDetector:
         """
         图像目标检测，返回画了 bbox 的 JPEG 图片字节和原始尺寸信息。
 
-        接受任意尺寸图片；长边超过 IMAGE_AUTO_SCALE_SIDE 自动缩放后检测；
-        超过 IMAGE_HARD_LIMIT_SIDE 或文件过大时抛出 ValueError（含原始尺寸说明）。
+        接受任意尺寸图片，按原尺寸处理；超过 IMAGE_HARD_LIMIT_SIDE 或
+        文件过大时抛出 ValueError（含原始尺寸说明）。
 
         参数:
             image_data: 图片二进制数据（JPEG/PNG/BMP，任意尺寸）
 
         返回:
             (画框 JPEG 图片字节, meta字典)，meta 含 original_width/original_height/
-            processed_width/processed_height/scaled/scale_info
+            processed_width/processed_height
         """
         # 0. 文件大小校验（超出上限返回说明）
         if len(image_data) > config.IMAGE_MAX_FILE_BYTES:
@@ -151,15 +151,9 @@ class BoarDetector:
                 f"{config.IMAGE_HARD_LIMIT_SIDE}px，请先压缩"
             )
 
-        # 2. 自动缩放（长边超过阈值）
+        # 2. 按原始分辨率处理（不缩放，输出与原图同尺寸）
         processed = img_rgb
-        proc_h, proc_w = orig_h, orig_w
-        scale_info = None
-        if orig_max_side > config.IMAGE_AUTO_SCALE_SIDE:
-            scale = config.IMAGE_AUTO_SCALE_SIDE / orig_max_side
-            proc_w, proc_h = int(orig_w * scale), int(orig_h * scale)
-            processed = cv2.resize(img_rgb, (proc_w, proc_h))
-            scale_info = f"original {orig_w}x{orig_h} -> {proc_w}x{proc_h}"
+        proc_w, proc_h = orig_w, orig_h
 
         # 3. 推理
         t0 = time.time()
@@ -186,8 +180,6 @@ class BoarDetector:
             "original_height": orig_h,
             "processed_width": proc_w,
             "processed_height": proc_h,
-            "scaled": scale_info is not None,
-            "scale_info": scale_info,
         }
         return buf.tobytes(), meta
 
@@ -214,15 +206,15 @@ class BoarDetector:
         """
         视频逐帧目标检测，返回画了 bbox 的 mp4 视频字节和原始信息。
 
-        接受任意尺寸/时长视频；帧长边超过 VIDEO_AUTO_SCALE_SIDE 自动缩放；
-        文件超过 VIDEO_MAX_SIZE 或时长超过 VIDEO_MAX_DURATION 时抛出 ValueError（含原始信息）。
+        接受任意尺寸/时长视频，按原尺寸处理；文件超过 VIDEO_MAX_SIZE 或
+        时长超过 VIDEO_MAX_DURATION 时抛出 ValueError（含原始信息）。
 
         参数:
             video_data: 视频二进制数据（mp4/avi/mov，任意尺寸）
 
         返回:
             (画框 mp4 视频字节, meta字典)，meta 含 original_width/original_height/
-            original_duration/original_size/scaled/scale_info
+            original_duration/original_size/processed_width/processed_height
         """
         # 0. 文件大小校验（超出上限返回说明，含原始大小）
         if len(video_data) > config.VIDEO_MAX_SIZE:
@@ -261,15 +253,8 @@ class BoarDetector:
             if width <= 0 or height <= 0:
                 raise ValueError("视频尺寸无效")
 
-            # 3. 计算输出尺寸（帧长边超过阈值则自动缩放）
+            # 3. 按原始帧分辨率处理（不缩放，输出与原始视频同尺寸）
             out_width, out_height = width, height
-            max_side = max(width, height)
-            scale_info = None
-            if max_side > config.VIDEO_AUTO_SCALE_SIDE:
-                scale = config.VIDEO_AUTO_SCALE_SIDE / max_side
-                out_width = int(width * scale)
-                out_height = int(height * scale)
-                scale_info = f"original {width}x{height} -> {out_width}x{out_height}"
 
             logger.info(
                 f"视频处理: {width}×{height}, {fps:.0f}fps, "
@@ -299,11 +284,7 @@ class BoarDetector:
                 if not ret:
                     break
 
-                # 缩放（如需）
-                if out_width != width or out_height != height:
-                    frame = cv2.resize(frame, (out_width, out_height))
-
-                # BGR → RGB 推理
+                # BGR → RGB 推理（保持原始帧分辨率）
                 frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 result = self._infer(frame_rgb)
 
@@ -333,8 +314,6 @@ class BoarDetector:
                 "original_size": len(video_data),
                 "processed_width": out_width,
                 "processed_height": out_height,
-                "scaled": scale_info is not None,
-                "scale_info": scale_info,
             }
             return video_bytes, meta
 
