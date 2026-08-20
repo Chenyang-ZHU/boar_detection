@@ -1,4 +1,4 @@
-"""模型加载与推理封装（支持图像/视频画框返回）"""
+"""模型加载与推理封装（图像/视频坐标返回 + 视频画框返回）"""
 
 import os
 import time
@@ -93,8 +93,30 @@ class BoarDetector:
 
         return frame_bgr
 
+    def _parse_detections(self, result) -> list:
+        """从推理结果解析检测列表（归一化 bbox，范围 0~1）"""
+        detections = []
+        boxes = result.boxes
+        if boxes is not None:
+            for box in boxes:
+                cls_id = int(box.cls[0])
+                conf = float(box.conf[0])
+                xyxyn = box.xyxyn[0].tolist()
+                detections.append({
+                    "class": self.model.names[cls_id],
+                    "class_id": cls_id,
+                    "confidence": round(conf, 4),
+                    "bbox": {
+                        "x1": round(xyxyn[0], 6),
+                        "y1": round(xyxyn[1], 6),
+                        "x2": round(xyxyn[2], 6),
+                        "y2": round(xyxyn[3], 6),
+                    }
+                })
+        return detections
+
     # ------------------------------------------------------------------
-    # 图像检测：返回画框 JPEG
+    # 图像检测：返回检测坐标
     # ------------------------------------------------------------------
     def _validate_and_decode(self, image_data: bytes) -> np.ndarray:
         """校验图片格式，解码为 RGB numpy 数组（保持原始分辨率，尺寸不限）"""
@@ -108,7 +130,7 @@ class BoarDetector:
         else:
             raise ValueError("不支持的图片格式，仅支持 JPEG/PNG/BMP")
 
-        # 解码（接受任意尺寸，尺寸限制由 detect_image 统一处理）
+        # 解码（接受任意尺寸，尺寸限制由 detect_image_coords 统一处理）
         try:
             img = Image.open(BytesIO(image_data))
             img = img.convert("RGB")
@@ -117,9 +139,9 @@ class BoarDetector:
 
         return np.array(img)
 
-    def detect_image(self, image_data: bytes) -> tuple:
+    def detect_image_coords(self, image_data: bytes) -> dict:
         """
-        图像目标检测，返回画了 bbox 的 JPEG 图片字节和原始尺寸信息。
+        图像目标检测，返回检测坐标（归一化 bbox）。
 
         接受任意尺寸图片，按原尺寸处理；超过 IMAGE_HARD_LIMIT_SIDE 或
         文件过大时抛出 ValueError（含原始尺寸说明）。
@@ -128,8 +150,11 @@ class BoarDetector:
             image_data: 图片二进制数据（JPEG/PNG/BMP，任意尺寸）
 
         返回:
-            (画框 JPEG 图片字节, meta字典)，meta 含 original_width/original_height/
-            processed_width/processed_height
+            {
+                "detections": [{"class","class_id","confidence","bbox":{x1,y1,x2,y2}}],
+                "image_width", "image_height", "inference_time_ms"
+            }
+            bbox 为归一化坐标（0~1）
         """
         # 0. 文件大小校验（超出上限返回说明）
         if len(image_data) > config.IMAGE_MAX_FILE_BYTES:
@@ -143,48 +168,33 @@ class BoarDetector:
         orig_h, orig_w = img_rgb.shape[:2]
 
         # 硬上限：长边过大则返回说明（含原始尺寸）
-        orig_max_side = max(orig_w, orig_h)
-        if orig_max_side > config.IMAGE_HARD_LIMIT_SIDE:
+        if max(orig_w, orig_h) > config.IMAGE_HARD_LIMIT_SIDE:
             raise ValueError(
                 f"图片过大（原始尺寸 {orig_w}×{orig_h}，原始数据大小 "
                 f"{len(image_data) / 1024 / 1024:.1f}MB），长边超过 "
                 f"{config.IMAGE_HARD_LIMIT_SIDE}px，请先压缩"
             )
 
-        # 2. 按原始分辨率处理（不缩放，输出与原图同尺寸）
-        processed = img_rgb
-        proc_w, proc_h = orig_w, orig_h
-
-        # 3. 推理
+        # 2. 推理（按原始分辨率）
         t0 = time.time()
-        result = self._infer(processed)
+        result = self._infer(img_rgb)
         inference_ms = (time.time() - t0) * 1000
 
-        # 4. 画框（BGR）
-        img_bgr = cv2.cvtColor(processed, cv2.COLOR_RGB2BGR)
-        img_bgr = self._draw_boxes(img_bgr, result)
-
-        # 5. 编码为 JPEG
-        ok, buf = cv2.imencode(".jpg", img_bgr, [cv2.IMWRITE_JPEG_QUALITY, 90])
-        if not ok:
-            raise ValueError("图片编码失败")
-
-        det_count = 0 if result.boxes is None else len(result.boxes)
+        # 3. 解析坐标
+        detections = self._parse_detections(result)
         logger.info(
-            f"图像检测完成: {det_count} 个目标, 原始 {orig_w}×{orig_h}, "
-            f"处理 {proc_w}×{proc_h}, 耗时 {inference_ms:.1f}ms"
+            f"图像检测完成: {len(detections)} 个目标, {orig_w}×{orig_h}, "
+            f"耗时 {inference_ms:.1f}ms"
         )
-
-        meta = {
-            "original_width": orig_w,
-            "original_height": orig_h,
-            "processed_width": proc_w,
-            "processed_height": proc_h,
+        return {
+            "detections": detections,
+            "image_width": orig_w,
+            "image_height": orig_h,
+            "inference_time_ms": round(inference_ms, 2),
         }
-        return buf.tobytes(), meta
 
     # ------------------------------------------------------------------
-    # 视频检测：逐帧返回画框 mp4
+    # 视频检测：坐标 / 画框 mp4 两种
     # ------------------------------------------------------------------
     def _pick_video_codec(self, fourcc_try_list, filename, fps, size):
         """根据策略选择可用编码器"""
@@ -201,6 +211,100 @@ class BoarDetector:
                 return codec
         # 兜底
         return cv2.VideoWriter_fourcc(*"mp4v")
+
+    def detect_video_coords(self, video_data: bytes) -> dict:
+        """
+        视频逐帧目标检测，返回每帧检测坐标（归一化 bbox）。
+
+        接受任意尺寸/时长视频，按原尺寸逐帧处理；文件超过 VIDEO_MAX_SIZE 或
+        时长超过 VIDEO_MAX_DURATION 时抛出 ValueError（含原始信息）。
+
+        参数:
+            video_data: 视频二进制数据（mp4/avi/mov，任意尺寸）
+
+        返回:
+            {
+                "frame_width", "frame_height", "fps", "frame_count", "duration_sec",
+                "frames": [{"index", "timestamp_ms", "detections":[...]}, ...]
+            }
+            无检测的帧 detections 为空数组；bbox 为归一化坐标（0~1）
+        """
+        # 0. 文件大小校验（超出上限返回说明，含原始大小）
+        if len(video_data) > config.VIDEO_MAX_SIZE:
+            raise ValueError(
+                f"视频文件过大（{len(video_data) / 1024 / 1024:.1f}MB，原始数据大小），"
+                f"超过处理上限 {config.VIDEO_MAX_SIZE / 1024 / 1024:.0f}MB"
+            )
+
+        tmp_in = None
+        cap = None
+        try:
+            # 1. 写入临时文件并打开
+            with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as f:
+                f.write(video_data)
+                tmp_in = f.name
+
+            cap = cv2.VideoCapture(tmp_in)
+            if not cap.isOpened():
+                raise ValueError("无法读取视频，请确认视频格式为 mp4/avi/mov")
+
+            fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
+            width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+
+            # 2. 校验时长（超出上限返回说明，含原始时长）
+            duration = total_frames / fps if fps > 0 else 0
+            if duration > config.VIDEO_MAX_DURATION:
+                raise ValueError(
+                    f"视频时长 {duration:.1f} 秒超过处理上限 "
+                    f"{config.VIDEO_MAX_DURATION} 秒（原始时长 {duration:.1f}s，"
+                    f"原始数据大小 {len(video_data) / 1024 / 1024:.1f}MB）"
+                )
+            if width <= 0 or height <= 0:
+                raise ValueError("视频尺寸无效")
+
+            # 3. 逐帧检测
+            frames = []
+            index = 0
+            t0 = time.time()
+            while True:
+                ret, frame = cap.read()
+                if not ret:
+                    break
+
+                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                result = self._infer(frame_rgb)
+                detections = self._parse_detections(result)
+
+                frames.append({
+                    "index": index,
+                    "timestamp_ms": round(index * 1000.0 / fps, 2) if fps > 0 else 0,
+                    "detections": detections,
+                })
+                index += 1
+
+            inference_ms = (time.time() - t0) * 1000
+            logger.info(
+                f"视频坐标检测完成: {index} 帧, 耗时 {inference_ms / 1000:.1f}s"
+            )
+
+            return {
+                "frame_width": width,
+                "frame_height": height,
+                "fps": round(fps, 2),
+                "frame_count": index,
+                "duration_sec": round(duration, 2),
+                "frames": frames,
+            }
+        finally:
+            if cap is not None:
+                cap.release()
+            if tmp_in and os.path.exists(tmp_in):
+                try:
+                    os.remove(tmp_in)
+                except OSError:
+                    pass
 
     def detect_video(self, video_data: bytes) -> tuple:
         """

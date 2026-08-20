@@ -1,6 +1,6 @@
 # AI 服务协议约定
 
-> 版本：v2.0（画框图片/视频返回）  
+> 版本：v2.1（图像/视频坐标返回 + 视频画框）  
 > 最后更新：2026-08-16
 
 ---
@@ -19,24 +19,21 @@
 
 | 接口 | 方法 | 请求 | 成功响应 |
 |------|------|------|---------|
-| `/detect` | POST | multipart，字段 `image` | **画框 JPEG 图片** |
-| `/detect/raw` | POST | 纯二进制，`Content-Type: image/*` | **画框 JPEG 图片** |
+| `/detect` | POST | multipart，字段 `image` | **检测坐标 JSON** |
+| `/detect/raw` | POST | 纯二进制，`Content-Type: image/*` | **检测坐标 JSON** |
+| `/detect/video/coords` | POST | multipart，字段 `video` | **逐帧检测坐标 JSON** |
 | `/detect/video` | POST | multipart，字段 `video` | **画框 MP4 视频** |
 | `/health` | GET | 无 | JSON 健康状态 |
 
-> **成功响应是媒体文件（画框图片/视频），不再是 JSON 坐标。** 调用方把响应 body 直接存成 `.jpg` / `.mp4` 文件即可。
->
-> **错误时返回 HTTP 4xx/5xx + JSON**（见第 5 节）。
+> **所有响应统一 HTTP 200**，调用方以 `code` 字段区分业务状态（0=成功，非 0=失败）。成功时 `data` 为业务数据；失败时 `data` 为 null。
 
 ---
 
-## 3. 图像检测
+## 3. 图像检测（返回坐标）
 
 ### 3.1 POST /detect（multipart）
 
 #### 请求
-
-标准 HTTP 文件上传：
 
 ```bash
 curl -X POST http://{host}:5000/detect \
@@ -50,33 +47,50 @@ resp = requests.post(
     files={"image": open("图片路径.jpg", "rb")},
     timeout=30,
 )
-if resp.status_code == 200:
-    with open("result.jpg", "wb") as f:
-        f.write(resp.content)   # 画框图片字节
+data = resp.json()   # 都是 HTTP 200，看 code
+if data["code"] == 0:
+    print(data["data"])
 else:
-    print(resp.json())          # 错误 JSON
+    print(data["message"])
 ```
 
-#### 响应
+#### 成功响应
 
-- **成功（HTTP 200）**：`Content-Type: image/jpeg`，body 为画框后的 JPEG 图片；未检测到目标时返回原图。
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "detections": [
+      {
+        "class": "boar",
+        "class_id": 0,
+        "confidence": 0.934,
+        "bbox": {"x1": 0.10, "y1": 0.20, "x2": 0.50, "y2": 0.60}
+      }
+    ],
+    "image_width": 1920,
+    "image_height": 1080,
+    "inference_time_ms": 95.3
+  }
+}
+```
 
-  响应头（返回原始数据大小信息）：
+| 字段 | 说明 |
+|------|------|
+| `detections[]` | 检测目标列表；未检测到时为空数组 |
+| `detections[].class` | 类别名（"boar"） |
+| `detections[].class_id` | 类别 ID（0） |
+| `detections[].confidence` | 置信度 0~1 |
+| `detections[].bbox` | **归一化坐标**（0~1），相对原始图片尺寸 |
+| `image_width` / `image_height` | 输入图片原始尺寸（像素） |
+| `inference_time_ms` | 推理耗时（毫秒） |
 
-  | 响应头 | 说明 |
-  |--------|------|
-  | `X-Original-Width` | 原始图片宽度（像素） |
-  | `X-Original-Height` | 原始图片高度（像素） |
-
-  输出图片尺寸与原始输入一致（按原尺寸处理，不缩放）。
-
-- **失败（HTTP 4xx/5xx）**：JSON，见第 5 节。
+**像素坐标还原**：`像素 = bbox × image_width/height`
 
 ### 3.2 POST /detect/raw（纯二进制）
 
-#### 请求
-
-图片二进制直接放在 body 中，适用于摄像头内存数据等场景：
+图片二进制直接放 body，适用于摄像头内存数据：
 
 ```bash
 curl -X POST http://{host}:5000/detect/raw \
@@ -84,89 +98,110 @@ curl -X POST http://{host}:5000/detect/raw \
   --data-binary @图片路径.jpg
 ```
 
-```python
-import requests
-image_data = camera_sdk.get_frame()  # bytes
-resp = requests.post(
-    "http://{host}:5000/detect/raw",
-    data=image_data,
-    headers={"Content-Type": "image/jpeg"},
-    timeout=30,
-)
-if resp.status_code == 200:
-    with open("result.jpg", "wb") as f:
-        f.write(resp.content)
-```
-
-#### 响应
-
-与 `/detect` 完全一致（画框 JPEG + 原始尺寸响应头）。
+响应格式与 `/detect` 完全一致。
 
 ---
 
-## 4. 视频检测
+## 4. 视频检测（两种接口）
 
-### 4.1 POST /detect/video
+### 4.1 POST /detect/video/coords（逐帧坐标）
 
-#### 请求
+逐帧检测，返回每帧坐标，调用方可按 `index` / `timestamp_ms` 对应到原视频做跟踪/统计。
 
 ```bash
-curl -X POST http://{host}:5000/detect/video \
+curl -X POST http://{host}:5000/detect/video/coords \
   -m 120 \
   -F "video=@视频路径.mp4"
 ```
 
-```python
-import requests
-resp = requests.post(
-    "http://{host}:5000/detect/video",
-    files={"video": open("视频路径.mp4", "rb")},
-    timeout=120,
-)
-if resp.status_code == 200:
-    with open("result.mp4", "wb") as f:
-        f.write(resp.content)
-else:
-    print(resp.json())
-```
-
-#### 响应
-
-- **成功（HTTP 200）**：`Content-Type: video/mp4`，body 为逐帧画框后的 MP4 视频。
-
-  响应头：
-
-  | 响应头 | 说明 |
-  |--------|------|
-  | `X-Original-Width` | 原始视频帧宽（像素） |
-  | `X-Original-Height` | 原始视频帧高（像素） |
-  | `X-Original-Duration` | 原始时长（秒） |
-  | `X-Original-Size` | 原始文件大小（字节） |
-
-  输出视频尺寸与原始输入一致（按原尺寸处理，不缩放）。
-
-- **失败（HTTP 4xx/5xx）**：JSON，见第 5 节。
-
----
-
-## 5. 错误响应
-
-**错误时返回 HTTP 4xx/5xx + JSON**：
+#### 成功响应
 
 ```json
 {
-  "code": 40001,
-  "message": "图片过大（原始尺寸 9000×6000，原始数据大小 0.8MB），长边超过 8192px，请先压缩",
-  "data": null
+  "code": 0,
+  "message": "success",
+  "data": {
+    "frame_width": 1920,
+    "frame_height": 1080,
+    "fps": 20.0,
+    "frame_count": 225,
+    "duration_sec": 11.25,
+    "frames": [
+      {
+        "index": 0,
+        "timestamp_ms": 0.0,
+        "detections": [
+          {"class": "boar", "class_id": 0, "confidence": 0.93,
+           "bbox": {"x1": 0.1, "y1": 0.2, "x2": 0.5, "y2": 0.6}}
+        ]
+      },
+      {
+        "index": 1,
+        "timestamp_ms": 50.0,
+        "detections": []
+      }
+    ]
+  }
 }
 ```
 
-| HTTP 状态 | code | 含义 | 处理方法 |
-|----------|------|------|---------|
-| 400 | `40001` | 参数错误：格式不支持、尺寸/大小超限、时长超限、缺字段 | 按 message 提示修正 |
-| 500 | `50001` | 模型推理/处理异常 | 稍后重试，持续失败请联系服务方 |
+| 字段 | 说明 |
+|------|------|
+| `frame_width` / `frame_height` | 视频帧尺寸（像素） |
+| `fps` | 帧率 |
+| `frame_count` | 总帧数 |
+| `duration_sec` | 视频时长（秒） |
+| `frames[]` | 逐帧结果 |
+| `frames[].index` | 帧序号（从 0 开始） |
+| `frames[].timestamp_ms` | 该帧时间戳（毫秒） |
+| `frames[].detections` | 该帧检测列表，未检测到为空数组；bbox 归一化 |
 
-> 调用方应根据 **HTTP 状态码** 判断成功与否（2xx 成功，4xx/5xx 失败），错误详情在 JSON 的 `message` 中。
+### 4.2 POST /detect/video（画框视频）
+
+逐帧检测并画框，返回 MP4 视频。
+
+```bash
+curl -s -o /tmp/out.mp4 -m 120 \
+  -X POST http://{host}:5000/detect/video \
+  -F "video=@视频路径.mp4"
+```
+
+#### 成功响应
+
+- HTTP 200，`Content-Type: video/mp4`，body 为画框视频字节，直接存成 `.mp4` 即可
+- 响应头（返回原始数据大小信息）：
+
+| 响应头 | 说明 |
+|--------|------|
+| `X-Original-Width` | 原始帧宽（像素） |
+| `X-Original-Height` | 原始帧高（像素） |
+| `X-Original-Duration` | 原始时长（秒） |
+| `X-Original-Size` | 原始文件大小（字节） |
+
+---
+
+## 5. 响应与错误
+
+**所有响应统一 HTTP 200**，以 `code` 区分：
+
+```json
+{ "code": 0,     "message": "success",         "data": { ... } }    // 成功
+{ "code": 40001, "message": "错误说明",        "data": null }       // 参数错误
+{ "code": 50001, "message": "模型推理失败: ...", "data": null }      // 服务异常
+```
+
+| code | 含义 | 处理方法 |
+|------|------|---------|
+| `0` | 成功 | — |
+| `40001` | 参数错误：格式不支持、尺寸/大小超限、时长超限、缺字段 | 按 message 提示修正 |
+| `50001` | 模型推理/处理异常 | 稍后重试，持续失败请联系服务方 |
+
+常见错误 message：
+- `不支持的图片格式，仅支持 JPEG/PNG/BMP`
+- `图片过大（原始尺寸 9000×6000，原始数据大小 0.8MB），长边超过 8192px，请先压缩`
+- `请求中缺少 image 字段`
+- `视频时长 45.0 秒超过处理上限 300 秒（原始时长 45.0s，原始数据大小 12.0MB）`
+- `无法读取视频，请确认视频格式为 mp4/avi/mov`
 
 ---
 
@@ -177,20 +212,18 @@ else:
 | 项目 | 规则 |
 |------|------|
 | 格式 | JPEG、PNG、BMP（按文件头魔数识别） |
-| 尺寸 | **接受任意尺寸**，**按原始尺寸处理并返回**（不缩放） |
+| 尺寸 | **接受任意尺寸**，按原始尺寸处理 |
 | 上限 | 长边 > 8192px 或文件 > 50MB → 返回 `40001` 说明（含原始尺寸） |
-| 输出 | 画框 JPEG（质量 90），尺寸与原图一致 |
 
 ### 6.2 视频
 
 | 项目 | 规则 |
 |------|------|
 | 格式 | mp4 / avi / mov / mkv 等（OpenCV/FFmpeg 可解码） |
-| 尺寸 | **接受任意尺寸/时长**，**按原始分辨率处理并返回**（不缩放） |
+| 尺寸 | **接受任意尺寸/时长**，按原始分辨率逐帧处理 |
 | 上限 | 文件 > 500MB 或时长 > 300 秒 → 返回 `40001` 说明（含原始时长/大小） |
-| 输出 | 逐帧画框 MP4（编码优先 H.264，回退 mp4v），分辨率与原视频一致 |
 
-> **调用方无需自行缩放**：直接传原始图片/视频即可，服务端按原尺寸处理，并在响应头返回原始尺寸信息。
+> **调用方无需自行缩放**：直接传原始图片/视频即可。
 
 ---
 
@@ -210,14 +243,6 @@ GET http://{host}:5000/health
 }
 ```
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| status | string | 服务状态，"ok" 表示正常 |
-| model_loaded | bool | 模型是否成功加载 |
-| model | string | 当前加载的模型名称 |
-| device | string | 推理设备，"cpu" 或 "cuda:0" |
-| uptime_seconds | int | 服务已运行时长（秒） |
-
 ---
 
 ## 8. 调用方注意事项
@@ -227,17 +252,13 @@ GET http://{host}:5000/health
 | 接口 | 建议超时 |
 |------|---------|
 | `/detect`、`/detect/raw` | 30 秒 |
+| `/detect/video/coords` | 120 秒 |
 | `/detect/video` | 120 秒 |
 
 > 单张图片 Jetson GPU 推理约 130~160ms；视频逐帧检测约 46ms/帧，30 秒视频约需 40 秒处理。
 
-### 8.2 输出文件
+### 8.2 输出
 
-- 图像成功响应：直接把 body 存成 `.jpg`
-- 视频成功响应：直接把 body 存成 `.mp4`
-
-### 8.3 原始尺寸信息
-
-- 响应头 `X-Original-Width` / `X-Original-Height` 始终返回输入图片/视频的原始像素尺寸
-- 输出结果**与原尺寸一致**（不缩放）
-- 视频额外提供 `X-Original-Duration`（秒）和 `X-Original-Size`（字节）
+- 坐标接口：直接解析 `data` 里的 detections/bbox
+- 画框视频接口：把响应 body 存成 `.mp4`，文件名由调用方自定义
+- bbox 均为归一化坐标，还原像素 = `bbox × 对应边像素`
