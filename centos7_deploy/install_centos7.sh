@@ -68,6 +68,9 @@ else
 fi
 PY="$MINICONDA_DIR/envs/$ENV_NAME/bin/python"
 PIP="$MINICONDA_DIR/envs/$ENV_NAME/bin/pip"
+# conda 环境的库目录：CentOS 7 系统 libstdc++ 太老（最高 GLIBCXX_3.4.19），
+# 必须让服务用 conda 的 libstdc++（否则 PIL 报 "GLIBCXX_3.4.21 not found"）
+CONDA_LIB="$MINICONDA_DIR/envs/$ENV_NAME/lib"
 
 # ---------- [3/7] conda-forge 编译型依赖 ----------
 log "[3/7] conda-forge 安装编译型依赖（glibc 2.17 兼容）"
@@ -104,6 +107,7 @@ log "[7/7] 安装 systemd 开机自启"
 cp "$SCRIPT_DIR/boar_detection.service" /etc/systemd/system/
 sed -i "s|@PY@|$PY|g" /etc/systemd/system/boar_detection.service
 sed -i "s|@DEPLOY_DIR@|$DEPLOY_DIR|g" /etc/systemd/system/boar_detection.service
+sed -i "s|@CONDA_LIB@|$CONDA_LIB|g" /etc/systemd/system/boar_detection.service
 systemctl daemon-reload
 systemctl enable --now boar_detection
 

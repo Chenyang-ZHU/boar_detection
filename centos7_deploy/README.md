@@ -65,5 +65,6 @@ pip install -r requirements-centos7.txt
 
 - **Miniconda 钉死 23.10.0-1**：`latest` 自 24.x 起要求 glibc >= 2.28，在 CentOS 7 (glibc 2.17) 上会报 "Installer requires GLIBC >=2.28"，装不上。脚本已钉死 `Miniconda3-py311_23.10.0-1-Linux-x86_64.sh`，不要改回 latest。
 - **不要升级依赖**：`torch<2.7`、`numpy<2`、`opencv<4.10`，否则 glibc 不满足装不上
+- **libstdc++ 必须用 conda 的**：CentOS 7 系统自带的 `libstdc++.so.6` 最高只支持 GLIBCXX_3.4.19，PIL/torch 需要 GLIBCXX_3.4.21+。脚本/systemd 已通过 `Environment=LD_LIBRARY_PATH=/opt/miniconda3/envs/boar/lib` 解决；**手动启动服务时也必须加**：`export LD_LIBRARY_PATH=/opt/miniconda3/envs/boar/lib`
 - 模型文件需放在 `/opt/boar-detection/best.pt`（脚本会自动拷）
 - 局域网直接访问 `http://<本机IP>:5000`；如需公网，可在本机配 ngrok/其他隧道（见 `work/service/公网测试指南.md`）

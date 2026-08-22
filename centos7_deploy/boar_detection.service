@@ -5,6 +5,9 @@ After=network.target
 [Service]
 Type=simple
 User=root
+# 必须指向 conda 环境的 lib：CentOS 7 系统 libstdc++ 太老（最高 GLIBCXX_3.4.19），
+# 不设此变量 PIL/torch 会报 "GLIBCXX_3.4.21 not found"
+Environment=LD_LIBRARY_PATH=@CONDA_LIB@
 WorkingDirectory=@DEPLOY_DIR@
 ExecStart=@PY@ @DEPLOY_DIR@/app.py
 Restart=always
