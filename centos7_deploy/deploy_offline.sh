@@ -41,6 +41,11 @@ if [ ! -x "$PY" ]; then
   echo "❌ 解压后未找到环境 $PY，包可能损坏或路径不符"
   exit 1
 fi
+if [ ! -f "$DEPLOY_DIR/boar_detection.service" ]; then
+  echo "❌ 解压后未找到 $DEPLOY_DIR/boar_detection.service"
+  echo "   离线包需在跑过 install_centos7.sh 的机器上打包，其 /opt/boar-detection 应自带 systemd 单元文件"
+  exit 1
+fi
 echo "✅ 已解压: $MINICONDA_DIR 与 $DEPLOY_DIR"
 
 # ---------- [2/4] systemd ----------

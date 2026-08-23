@@ -99,6 +99,9 @@ mkdir -p "$DEPLOY_DIR"
 cp "$SERVICE_SRC/app.py" "$SERVICE_SRC/detector.py" "$DEPLOY_DIR/"
 cp "$MODEL_SRC" "$DEPLOY_DIR/best.pt"
 cp "$SCRIPT_DIR/config.centos7.py" "$DEPLOY_DIR/config.py"
+# 同时把 systemd 单元也放进部署目录（带 @PY@/@DEPLOY_DIR@/@CONDA_LIB@ 占位符），
+# 供离线打包（deploy_offline.sh 会从 /opt/boar-detection/boar_detection.service 读取并替换）
+cp "$SCRIPT_DIR/boar_detection.service" "$DEPLOY_DIR/"
 ls -la "$DEPLOY_DIR/"
 echo "✅ 服务文件已部署"
 

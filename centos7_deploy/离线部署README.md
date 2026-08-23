@@ -1,33 +1,52 @@
 # 离线部署（无需网络）
 
-把整个部署「下载的东西」打成一个包带走：**conda 环境（含 torch/ultralytics/flask 等全部依赖）+ 服务代码 + 模型 + systemd 单元**。新机器不需要再联网下载。
+把已打包好的离线包（conda 环境含全部依赖 + 服务代码 + 模型 + systemd 单元）解压到目标机即可用，全程**零网络**。
 
-## 包从哪里来
+## 前置
 
-在任意一台**已经跑过 `install_centos7.sh`** 的机器上（或本机用 docker 构建），把部署产物打包：
+- 已拿到离线包 `boar_centos7_offline.tar.gz`
+- 目标 CentOS 7（x86_64，glibc 2.17），root / sudo
 
-```bash
-tar -czf boar_centos7_offline.tar.gz -C /opt miniconda3 boar-detection
-```
+## 从 U 盘拷贝到本机
 
-> 打包前建议删除 `/opt/miniconda3/pkgs`（conda 包缓存，不参与运行，可省 1~2GB）与 `__pycache__`。
-> 仓库 `centos7_deploy/` 里也提供了打包脚本（docker 构建用），产物即 `boar_centos7_offline.tar.gz`。
-
-包内容（固定绝对路径，解压到相同路径即可用）：
-
-| 路径 | 内容 |
-|------|------|
-| `/opt/miniconda3/envs/boar/` | Python 3.10 环境：torch 2.6.0 CPU / torchvision / ultralytics 8.4.114 / flask 等 |
-| `/opt/boar-detection/` | app.py / detector.py / config.py / best.pt / boar_detection.service |
-
-## 目标机器上部署
+1. **插入 U 盘**。GNOME 桌面会自动挂载，打开文件管理器左侧可见 U 盘，挂载点一般是 `/run/media/<用户名>/<卷标>`。若没有自动挂载，手动挂载：
 
 ```bash
-# 把 boar_centos7_offline.tar.gz 拷到目标机器（U 盘 / scp / 内网盘均可）
-sudo bash deploy_offline.sh boar_centos7_offline.tar.gz
+lsblk                            # 查看设备，例如 U 盘是 /dev/sdb1
+sudo mkdir -p /mnt/usb
+sudo mount /dev/sdb1 /mnt/usb    # 设备名按实际替换
 ```
 
-脚本自动完成：解压到 `/opt` → 装 systemd 单元 → 启动 → 健康检查（最多等 40s）。全程零网络。
+2. **把离线包和部署脚本拷到本机磁盘**（U 盘上直接读 965MB 慢且易出错，先拷到本地再部署；下面以拷到 `/opt` 为例）：
+
+```bash
+# 自动挂载（GNOME 桌面）
+sudo cp /run/media/<用户名>/<卷标>/boar_centos7_offline.tar.gz /opt/
+sudo cp /run/media/<用户名>/<卷标>/deploy_offline.sh /opt/
+
+# 手动挂载
+sudo cp /mnt/usb/boar_centos7_offline.tar.gz /opt/
+sudo cp /mnt/usb/deploy_offline.sh /opt/
+```
+
+3. **（可选）卸载 U 盘**：
+
+```bash
+sudo umount /mnt/usb    # 或卸载自动挂载点 /run/media/<用户名>/<卷标>
+```
+
+## 部署
+
+```bash
+# 磁盘余量检查：965MB 压缩包解压后约 4GB
+df -h /opt
+
+sudo bash /opt/deploy_offline.sh /opt/boar_centos7_offline.tar.gz
+```
+
+`deploy_offline.sh` 会自动把离线包解压到对应位置 `/opt/miniconda3` 与 `/opt/boar-detection`，然后安装 systemd 单元、启动服务并做健康检查（最多等 40s），全程**零网络**。
+
+> 也可以不拷贝、直接从 U 盘部署：`sudo bash /run/media/<用户名>/<卷标>/deploy_offline.sh /run/media/<用户名>/<卷标>/boar_centos7_offline.tar.gz`
 
 ## 验证
 
@@ -36,15 +55,8 @@ curl http://127.0.0.1:5000/health
 curl -X POST http://127.0.0.1:5000/detect -F "image=@test.jpg"
 ```
 
-## 对比安装版
+## 注意事项
 
-| | 安装版 install_centos7.sh | 离线版 deploy_offline.sh |
-|---|---|---|
-| 目标机器需联网 | 是（Miniconda+conda-forge+torch 全要下载） | 否 |
-| 耗时 | 10~20 分钟（取决于网速） | 1~3 分钟（解压为主） |
-| 包体积 | — | ~1-2GB（tar.gz） |
-| 磁盘占用 | ~4GB | ~4GB（解压后） |
-
-> ⚠️ 离线包只面向 **同架构同系统**（x86_64 CentOS 7 / glibc 2.17）机器；不要拿到 Jetson（aarch64）上解压。
-> ⚠️ 与安装版一致：`/opt/miniconda3`、`/opt/boar-detection` 是固定路径，解压路径不能改。
-> ⚠️ **打包的 `boar_detection.service` 必须用含 `Environment=LD_LIBRARY_PATH=@CONDA_LIB@` 的新版**（CentOS 7 系统 libstdc++ 太老，PIL/torch 需要 conda 的 libstdc++，否则启动报 `GLIBCXX_3.4.21 not found`）。`deploy_offline.sh` 会自动把 `@CONDA_LIB@` 替换成 `/opt/miniconda3/envs/boar/lib`。
+> ⚠️ 只面向**同架构同系统**（x86_64 CentOS 7 / glibc 2.17）机器；不要拿到 Jetson（aarch64）上解压。
+> ⚠️ `/opt/miniconda3`、`/opt/boar-detection` 是固定路径，解压路径不能改。
+> ⚠️ 服务经 systemd 单元自带的 `LD_LIBRARY_PATH` 使用 conda 的 libstdc++（目标系统 libstdc++ 太老，脚本已处理）。
