@@ -3,6 +3,8 @@
 在本机用 Docker + **本机已有的 `centos:7` 镜像**（glibc 2.17），模拟真实 CentOS 7，验证离线包能解压、部署、起服务、推理。**仅用于本地验证**；真实机器直接用 `deploy_offline.sh` 部署（见 `离线部署README.md`）。
 
 > 流程：启动容器 → `docker exec` 进入容器终端 → 依次运行 `prepare_shim.sh` 和 `deploy_offline.sh`。
+>
+> 📌 **当前离线包是加固版**（2026-08-23 重建，~971MB）：内含 **waitress 生产服务器 + 完整健壮性**（并发限流 429001 / 单请求超时 / 客户端断开中止 / 健康探活自愈）。离线部署后即为加固版，可用第 6.5 节验证健壮性。
 
 ## 1. 确认 Docker 与本机镜像
 
@@ -84,6 +86,36 @@ curl -X POST http://127.0.0.1:15000/detect \
 ```
 
 预期：`/health` 返回 `{"status":"ok","model_loaded":true,"device":"cpu",...}`；`/detect` 返回 `code:0` + 检测坐标。
+
+## 6.5 验证健壮性（加固版离线包）
+
+容器终端内：
+
+```bash
+# ① waitress 已在跑（/health 多了 busy_requests 字段）
+curl -s http://127.0.0.1:5000/health
+# 预期: {"status":"ok",...,"busy_requests":0,...}
+
+# ② 自愈脚本已装
+ls /opt/boar-detection/boar_health.sh && ls /etc/cron.d/boar_health
+
+# ③ 并发限流：同时发 5 个视频请求，应有 1 个返回 429001（服务繁忙）
+#    先准备一个长视频（处理需 >5s 才能触发并发窗口）：
+LD_LIBRARY_PATH=/opt/miniconda3/envs/boar/lib /opt/miniconda3/envs/boar/bin/python -c "
+import cv2
+img = cv2.imread('/bundle/test_boar_640.jpg')
+out = cv2.VideoWriter('/tmp/long.mp4', cv2.VideoWriter_fourcc(*'mp4v'), 10, (640,640))
+[out.write(img) for _ in range(200)]
+out.release()"
+for i in 1 2 3 4 5; do
+  curl -s -m 200 -o /tmp/r$i.txt -X POST http://127.0.0.1:5000/detect/video/coords \
+    -F "video=@/tmp/long.mp4" &
+done; wait
+# 查看哪几个是 429001（预期 4 个 code:0 + 1 个 429001）
+grep -l 429001 /tmp/r*.txt 2>/dev/null || echo "（未触发繁忙，可加大并发数）"
+```
+
+> ⚠️ 验证时**不要** `export LD_LIBRARY_PATH`（会连 curl 一起搞坏，curl 请求空响应）。只给需要它的 python 命令加前缀即可。
 
 ## 7. 退出容器终端 / 清理
 
