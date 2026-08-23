@@ -68,3 +68,13 @@ pip install -r requirements-centos7.txt
 - **libstdc++ 必须用 conda 的**：CentOS 7 系统自带的 `libstdc++.so.6` 最高只支持 GLIBCXX_3.4.19，PIL/torch 需要 GLIBCXX_3.4.21+。脚本/systemd 已通过 `Environment=LD_LIBRARY_PATH=/opt/miniconda3/envs/boar/lib` 解决；**手动启动服务时也必须加**：`export LD_LIBRARY_PATH=/opt/miniconda3/envs/boar/lib`
 - 模型文件需放在 `/opt/boar-detection/best.pt`（脚本会自动拷）
 - 局域网直接访问 `http://<本机IP>:5000`；如需公网，可在本机配 ngrok/其他隧道（见 `work/service/公网测试指南.md`）
+
+## 🛡️ 健壮性（脚本已内置）
+
+- **waitress 生产服务器**：替代 Flask 开发服务器（依赖已装），有连接管理、客户端断开检测
+- **并发限流**：同时最多处理 4 个请求，满员返回 `429001` 繁忙（调用方退避重试）
+- **单请求超时**：图像 30s / 视频 180s，超时返回 `50002`
+- **客户端断开中止**：调用方超时断开后，服务端自动中止该请求，不浪费 CPU
+- **自愈**：systemd `Restart=always`（管崩溃）+ cron 健康探活（`boar_health.sh` 管"卡死"），每分钟检查 /health，无响应自动重启
+- **日志限容**：journald 上限 500M
+- **临时文件清理**：cron 每 30 分钟清理 `/tmp/boar_detect_*.mp4`

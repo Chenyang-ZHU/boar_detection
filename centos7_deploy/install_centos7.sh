@@ -85,13 +85,14 @@ log "[4/7] pip 安装 torch 2.6.0 CPU 版 + torchvision 0.21.0"
   --index-url https://download.pytorch.org/whl/cpu
 echo "✅ torch CPU 版装好"
 
-# ---------- [5/7] ultralytics + flask ----------
+# ---------- [5/8] ultralytics + flask + waitress ----------
 # ultralytics 用 --no-deps（复用 conda 的 cv2/numpy，避免 pip 拉到不兼容的编译版）；
-# flask 单独装、不带 --no-deps，否则缺 werkzeug/jinja2 等依赖，服务启动即报 ModuleNotFoundError。
-log "[5/7] 安装 ultralytics + flask"
+# flask/waitress 单独装、不带 --no-deps，否则缺 werkzeug/jinja2 等依赖，服务启动即报 ModuleNotFoundError。
+log "[5/8] 安装 ultralytics + flask + waitress"
 "$PIP" install --no-deps ultralytics==8.4.114 py-cpuinfo ultralytics-thop
 "$PIP" install "flask>=3.0"
-echo "✅ ultralytics + flask 装好"
+"$PIP" install "waitress==3.0.2"
+echo "✅ ultralytics + flask + waitress 装好"
 
 # ---------- [6/7] 部署服务文件 ----------
 log "[6/7] 部署服务文件到 $DEPLOY_DIR"
@@ -105,14 +106,37 @@ cp "$SCRIPT_DIR/boar_detection.service" "$DEPLOY_DIR/"
 ls -la "$DEPLOY_DIR/"
 echo "✅ 服务文件已部署"
 
-# ---------- [7/7] systemd ----------
-log "[7/7] 安装 systemd 开机自启"
+# ---------- [7/8] systemd ----------
+log "[7/8] 安装 systemd 开机自启"
 cp "$SCRIPT_DIR/boar_detection.service" /etc/systemd/system/
 sed -i "s|@PY@|$PY|g" /etc/systemd/system/boar_detection.service
 sed -i "s|@DEPLOY_DIR@|$DEPLOY_DIR|g" /etc/systemd/system/boar_detection.service
 sed -i "s|@CONDA_LIB@|$CONDA_LIB|g" /etc/systemd/system/boar_detection.service
 systemctl daemon-reload
 systemctl enable --now boar_detection
+
+# ---------- [8/8] 健壮性加固 ----------
+log "[8/8] 健壮性加固（探活自愈 + 日志限容 + 临时文件清理）"
+# 健康探活脚本 + cron（覆盖"进程活着但卡死"，systemd Restart 只管崩溃）
+mkdir -p /etc/cron.d
+cp "$SCRIPT_DIR/boar_health.sh" /usr/local/bin/boar_health.sh
+cp "$SCRIPT_DIR/boar_health.sh" "$DEPLOY_DIR/boar_health.sh"   # 放进部署目录供离线打包
+chmod +x /usr/local/bin/boar_health.sh
+chmod +x "$DEPLOY_DIR/boar_health.sh"
+cat > /etc/cron.d/boar_health << 'EOF'
+* * * * * root /usr/local/bin/boar_health.sh
+EOF
+chmod 644 /etc/cron.d/boar_health
+# 视频临时文件清理（每 30 分钟清一次超过 10 分钟的残留，防进程被杀后堆积）
+cat > /etc/cron.d/boar_tmp_clean << 'EOF'
+*/30 * * * * root find /tmp -maxdepth 1 -name 'boar_detect_*.mp4' -mmin +10 -delete
+EOF
+chmod 644 /etc/cron.d/boar_tmp_clean
+# journald 日志限容（500M，防长跑撑爆分区）
+mkdir -p /etc/systemd/journald.conf.d
+printf '[Journal]\nSystemMaxUse=500M\n' > /etc/systemd/journald.conf.d/boar.conf
+systemctl restart systemd-journald 2>/dev/null || true
+echo "✅ 加固完成：探活 cron / 临时文件清理 / journald 500M"
 
 # ---------- 验证 ----------
 log "验证"

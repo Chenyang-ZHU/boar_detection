@@ -34,3 +34,4 @@ tqdm==4.66.1
 # --- 服务本体 ---
 ultralytics==8.4.114
 flask==3.0.3
+waitress==3.0.2

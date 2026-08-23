@@ -38,8 +38,15 @@ VIDEO_MAX_SIZE = 500 * 1024 * 1024
 # 视频编码策略："auto" 自动选择（优先 H.264，回退 mp4v）/ "mp4v" / "avc1"
 VIDEO_CODEC = "auto"
 
-# 最大同时推理线程数（Flask 多线程请求时的限制）
+# ---------- 健壮性配置 ----------
+# 最大同时处理的请求数（信号量限流，满员返回 429001 繁忙）
 MAX_INFERENCE_WORKERS = 4
+# waitress 服务器线程数（并发连接上限，比信号量宽裕）
+WAITRESS_THREADS = 16
+# 图像单请求处理超时（秒），超时返回 50002
+IMAGE_PROCESS_TIMEOUT = 30
+# 视频单请求处理超时（秒），超时返回 50002
+VIDEO_PROCESS_TIMEOUT = 180
 
 # 日志级别
 LOG_LEVEL = "INFO"

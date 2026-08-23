@@ -17,6 +17,16 @@ import config
 logger = logging.getLogger("detector")
 
 
+class ClientDisconnected(Exception):
+    """客户端已断开连接，中止处理"""
+    pass
+
+
+class ProcessingTimeout(Exception):
+    """单请求处理超时"""
+    pass
+
+
 class BoarDetector:
     """野猪检测器，线程安全"""
 
@@ -66,6 +76,13 @@ class BoarDetector:
                 verbose=False,
             )
         return results[0]
+
+    def _check_abort(self, is_closed, deadline):
+        """检查是否需要中止处理：客户端断开或处理超时"""
+        if is_closed and is_closed():
+            raise ClientDisconnected()
+        if deadline and time.time() > deadline:
+            raise ProcessingTimeout("处理超时")
 
     def _draw_boxes(self, frame_bgr: np.ndarray, result) -> np.ndarray:
         """在 BGR 帧上绘制检测框"""
@@ -139,15 +156,17 @@ class BoarDetector:
 
         return np.array(img)
 
-    def detect_image_coords(self, image_data: bytes) -> dict:
+    def detect_image_coords(self, image_data: bytes, is_closed=None, timeout=None) -> dict:
         """
         图像目标检测，返回检测坐标（归一化 bbox）。
 
         接受任意尺寸图片，按原尺寸处理；超过 IMAGE_HARD_LIMIT_SIDE 或
-        文件过大时抛出 ValueError（含原始尺寸说明）。
+        文件过大时抛出 ValueError（含原始尺寸说明）；处理超时抛 ProcessingTimeout。
 
         参数:
             image_data: 图片二进制数据（JPEG/PNG/BMP，任意尺寸）
+            is_closed: 可调用，返回 True 表示客户端已断开（可选）
+            timeout: 处理超时秒数（可选）
 
         返回:
             {
@@ -175,9 +194,12 @@ class BoarDetector:
                 f"{config.IMAGE_HARD_LIMIT_SIDE}px，请先压缩"
             )
 
-        # 2. 推理（按原始分辨率）
+        # 2. 推理（按原始分辨率），检查断开/超时
+        deadline = time.time() + timeout if timeout else None
+        self._check_abort(is_closed, deadline)
         t0 = time.time()
         result = self._infer(img_rgb)
+        self._check_abort(is_closed, deadline)
         inference_ms = (time.time() - t0) * 1000
 
         # 3. 解析坐标
@@ -212,15 +234,18 @@ class BoarDetector:
         # 兜底
         return cv2.VideoWriter_fourcc(*"mp4v")
 
-    def detect_video_coords(self, video_data: bytes) -> dict:
+    def detect_video_coords(self, video_data: bytes, is_closed=None, timeout=None) -> dict:
         """
         视频逐帧目标检测，返回每帧检测坐标（归一化 bbox）。
 
         接受任意尺寸/时长视频，按原尺寸逐帧处理；文件超过 VIDEO_MAX_SIZE 或
-        时长超过 VIDEO_MAX_DURATION 时抛出 ValueError（含原始信息）。
+        时长超过 VIDEO_MAX_DURATION 时抛出 ValueError（含原始信息）；
+        客户端断开抛 ClientDisconnected，超时抛 ProcessingTimeout。
 
         参数:
             video_data: 视频二进制数据（mp4/avi/mov，任意尺寸）
+            is_closed: 可调用，返回 True 表示客户端已断开（可选）
+            timeout: 处理超时秒数（可选）
 
         返回:
             {
@@ -264,11 +289,13 @@ class BoarDetector:
             if width <= 0 or height <= 0:
                 raise ValueError("视频尺寸无效")
 
-            # 3. 逐帧检测
+            # 3. 逐帧检测（每帧检查断开/超时）
+            deadline = time.time() + timeout if timeout else None
             frames = []
             index = 0
             t0 = time.time()
             while True:
+                self._check_abort(is_closed, deadline)
                 ret, frame = cap.read()
                 if not ret:
                     break
@@ -306,15 +333,18 @@ class BoarDetector:
                 except OSError:
                     pass
 
-    def detect_video(self, video_data: bytes) -> tuple:
+    def detect_video(self, video_data: bytes, is_closed=None, timeout=None) -> tuple:
         """
         视频逐帧目标检测，返回画了 bbox 的 mp4 视频字节和原始信息。
 
         接受任意尺寸/时长视频，按原尺寸处理；文件超过 VIDEO_MAX_SIZE 或
-        时长超过 VIDEO_MAX_DURATION 时抛出 ValueError（含原始信息）。
+        时长超过 VIDEO_MAX_DURATION 时抛出 ValueError（含原始信息）；
+        客户端断开抛 ClientDisconnected，超时抛 ProcessingTimeout。
 
         参数:
             video_data: 视频二进制数据（mp4/avi/mov，任意尺寸）
+            is_closed: 可调用，返回 True 表示客户端已断开（可选）
+            timeout: 处理超时秒数（可选）
 
         返回:
             (画框 mp4 视频字节, meta字典)，meta 含 original_width/original_height/
@@ -380,10 +410,12 @@ class BoarDetector:
             if not writer.isOpened():
                 raise ValueError("视频编码器初始化失败")
 
-            # 5. 逐帧检测
+            # 5. 逐帧检测（每帧检查断开/超时）
+            deadline = time.time() + timeout if timeout else None
             t0 = time.time()
             frame_count = 0
             while True:
+                self._check_abort(is_closed, deadline)
                 ret, frame = cap.read()
                 if not ret:
                     break

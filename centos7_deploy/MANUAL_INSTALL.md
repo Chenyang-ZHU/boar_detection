@@ -66,11 +66,12 @@ $PIP install torch==2.6.0 torchvision==0.21.0 \
   --index-url https://download.pytorch.org/whl/cpu
 ```
 
-**③ ultralytics + flask**（ultralytics 用 `--no-deps` 复用 conda 的 cv2/numpy；flask 正常装）：
+**③ ultralytics + flask + waitress**（ultralytics 用 `--no-deps` 复用 conda 的 cv2/numpy；flask/waitress 正常装）：
 
 ```bash
 $PIP install --no-deps ultralytics==8.4.114 py-cpuinfo ultralytics-thop
 $PIP install "flask>=3.0"
+$PIP install "waitress==3.0.2"
 ```
 
 ## 4. 部署服务文件

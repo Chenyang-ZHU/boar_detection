@@ -1,6 +1,9 @@
 [Unit]
 Description=Boar Detection HTTP Service (CentOS 7)
 After=network.target
+# 防崩溃循环：5 分钟内崩溃超 5 次则停止（避免反复重启刷日志）
+StartLimitIntervalSec=300
+StartLimitBurst=5
 
 [Service]
 Type=simple
@@ -12,6 +15,8 @@ WorkingDirectory=@DEPLOY_DIR@
 ExecStart=@PY@ @DEPLOY_DIR@/app.py
 Restart=always
 RestartSec=5
+TimeoutStartSec=60
+TimeoutStopSec=30
 StandardOutput=journal
 StandardError=journal
 

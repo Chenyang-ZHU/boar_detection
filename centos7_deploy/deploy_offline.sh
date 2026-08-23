@@ -60,6 +60,27 @@ systemctl daemon-reload
 systemctl enable --now boar_detection
 echo "✅ systemd 单元已启用"
 
+# ---------- [2.5/4] 健壮性加固（探活自愈 + 日志限容 + 临时文件清理） ----------
+echo "===== [2.5/4] 健壮性加固 ====="
+if [ -f "$DEPLOY_DIR/boar_health.sh" ]; then
+  mkdir -p /etc/cron.d
+  cp "$DEPLOY_DIR/boar_health.sh" /usr/local/bin/boar_health.sh
+  chmod +x /usr/local/bin/boar_health.sh
+  cat > /etc/cron.d/boar_health << 'EOF'
+* * * * * root /usr/local/bin/boar_health.sh
+EOF
+  chmod 644 /etc/cron.d/boar_health
+  echo "✅ 健康探活 cron 已装"
+fi
+cat > /etc/cron.d/boar_tmp_clean << 'EOF'
+*/30 * * * * root find /tmp -maxdepth 1 -name 'boar_detect_*.mp4' -mmin +10 -delete
+EOF
+chmod 644 /etc/cron.d/boar_tmp_clean
+mkdir -p /etc/systemd/journald.conf.d
+printf '[Journal]\nSystemMaxUse=500M\n' > /etc/systemd/journald.conf.d/boar.conf
+systemctl restart systemd-journald 2>/dev/null || true
+echo "✅ 加固完成"
+
 # ---------- [3/4] 健康检查 ----------
 echo "===== [3/4] 健康检查（最多等 40s：冷启动需加载模型）====="
 ready=""
