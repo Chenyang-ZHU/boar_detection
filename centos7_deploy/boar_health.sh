@@ -9,6 +9,8 @@
 #
 # 用法（由 cron 调用）：
 #   * * * * * root /usr/local/bin/boar_health.sh
+#
+# 兼容性：CentOS 7 与 Jetson 通用（curl / python3 / python / /dev/tcp 任选可用者）
 # ============================================================
 set -u
 
@@ -16,13 +18,25 @@ URL="http://127.0.0.1:5000/health"
 SERVICE="boar_detection"
 LOG="/var/log/boar_health.log"
 
+# 通用健康检查函数（按可用工具降级）
+if command -v curl >/dev/null 2>&1; then
+  check() { curl -sf -m 5 "$URL" >/dev/null 2>&1; }
+elif command -v python3 >/dev/null 2>&1; then
+  check() { python3 -c "import urllib.request; urllib.request.urlopen('$URL', timeout=5)" >/dev/null 2>&1; }
+elif command -v python >/dev/null 2>&1; then
+  check() { python -c "import urllib.request; urllib.request.urlopen('$URL', timeout=5)" >/dev/null 2>&1; }
+else
+  # 兜底：仅探测端口可达（无法验证应用响应，但聊胜于无）
+  check() { timeout 5 bash -c "exec 3<>/dev/tcp/127.0.0.1/5000" 2>/dev/null; }
+fi
+
 # 探测健康：5 秒内无响应视为异常
-if ! curl -sf -m 5 "$URL" >/dev/null 2>&1; then
+if ! check; then
   # 仅当服务处于 active 状态才重启（避免重启被手动停止的服务）
   if systemctl is-active --quiet "$SERVICE"; then
-    echo "$(date '+%F %T') 健康检查失败（超时/无响应），重启 $SERVICE" >> "$LOG"
+    echo "$(date '+%F %T') 健康检查失败（超时/无响应），重启 $SERVICE" >> "$LOG" 2>/dev/null || true
     systemctl restart "$SERVICE"
   else
-    echo "$(date '+%F %T') 健康检查失败，但 $SERVICE 非 active，不干预" >> "$LOG"
+    echo "$(date '+%F %T') 健康检查失败，但 $SERVICE 非 active，不干预" >> "$LOG" 2>/dev/null || true
   fi
 fi
