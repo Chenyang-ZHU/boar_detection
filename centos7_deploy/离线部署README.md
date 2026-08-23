@@ -60,3 +60,4 @@ curl -X POST http://127.0.0.1:5000/detect -F "image=@test.jpg"
 > ⚠️ 只面向**同架构同系统**（x86_64 CentOS 7 / glibc 2.17）机器；不要拿到 Jetson（aarch64）上解压。
 > ⚠️ `/opt/miniconda3`、`/opt/boar-detection` 是固定路径，解压路径不能改。
 > ⚠️ 服务经 systemd 单元自带的 `LD_LIBRARY_PATH` 使用 conda 的 libstdc++（目标系统 libstdc++ 太老，脚本已处理）。
+> ✅ **包内含生产服务器 waitress + 完整健壮性**（并发限流 429001 / 单请求超时 / 客户端断开中止 / 健康探活自愈），离线部署即加固版。离线包于 2026-08-23 重建并验证。
