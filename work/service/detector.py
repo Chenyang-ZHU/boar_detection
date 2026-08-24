@@ -14,6 +14,13 @@ from ultralytics import YOLO
 
 import config
 
+# moov 前置（Web Fast Start）：把 MP4 的 moov atom 挪到文件头，便于浏览器流式播放。
+# 纯 Python 库，无编译/glibc 依赖；缺失时降级为不处理（视频仍可下载播放，只是不能流式）。
+try:
+    from qtfaststart.processor import process as _faststart_process
+except ImportError:
+    _faststart_process = None
+
 logger = logging.getLogger("detector")
 
 
@@ -359,6 +366,7 @@ class BoarDetector:
 
         tmp_in = None
         tmp_out = None
+        fast_out = None
         cap = None
         writer = None
         try:
@@ -434,13 +442,26 @@ class BoarDetector:
                 f"视频检测完成: {frame_count} 帧, 耗时 {inference_ms / 1000:.1f}s"
             )
 
-            # 6. 释放并读取结果
+            # 6. 释放
             writer.release()
             writer = None
             cap.release()
             cap = None
 
-            with open(tmp_out, "rb") as f:
+            # 7. moov 前置（Web Fast Start）：把 moov atom 挪到文件头，便于浏览器流式播放。
+            #    OpenCV VideoWriter 默认把 moov 写在文件尾部；qtfaststart 纯 Python 后处理挪到前面。
+            read_path = tmp_out
+            if _faststart_process is not None:
+                fast_out = tmp_out + ".fast.mp4"
+                try:
+                    _faststart_process(tmp_out, fast_out)
+                    read_path = fast_out
+                    logger.info("视频 moov 已前置（Fast Start）")
+                except Exception as e:
+                    logger.warning(f"moov 前置失败，返回原始文件: {e}")
+                    read_path = tmp_out
+
+            with open(read_path, "rb") as f:
                 video_bytes = f.read()
 
             meta = {
@@ -459,7 +480,7 @@ class BoarDetector:
             if cap is not None:
                 cap.release()
             # 清理临时文件
-            for path in (tmp_in, tmp_out):
+            for path in (tmp_in, tmp_out, fast_out):
                 if path and os.path.exists(path):
                     try:
                         os.remove(path)
