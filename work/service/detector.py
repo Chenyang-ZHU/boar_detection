@@ -327,6 +327,7 @@ class BoarDetector:
             deadline = time.time() + timeout if timeout else None
             frames = []
             index = 0
+            total_detections = 0
             t0 = time.time()
             while True:
                 self._check_abort(is_closed, deadline)
@@ -337,6 +338,7 @@ class BoarDetector:
                 frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 result = self._infer(frame_rgb)
                 detections = self._parse_detections(result)
+                total_detections += len(detections)
 
                 frames.append({
                     "index": index,
@@ -356,6 +358,7 @@ class BoarDetector:
                 "fps": round(fps, 2),
                 "frame_count": index,
                 "duration_sec": round(duration, 2),
+                "total_detections": total_detections,
                 "frames": frames,
             }
         finally:
@@ -450,6 +453,7 @@ class BoarDetector:
             deadline = time.time() + timeout if timeout else None
             t0 = time.time()
             frame_count = 0
+            total_detections = 0
             while True:
                 self._check_abort(is_closed, deadline)
                 ret, frame = cap.read()
@@ -459,6 +463,10 @@ class BoarDetector:
                 # BGR → RGB 推理（保持原始帧分辨率）
                 frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 result = self._infer(frame_rgb)
+
+                # 累计野猪数量（全视频累计检出次数）
+                if result.boxes is not None:
+                    total_detections += len(result.boxes)
 
                 # 画框（BGR）
                 frame = self._draw_boxes(frame, result)
@@ -506,6 +514,7 @@ class BoarDetector:
                 "original_size": len(video_data),
                 "processed_width": out_width,
                 "processed_height": out_height,
+                "boar_count": total_detections,
             }
             return video_bytes, meta
 
