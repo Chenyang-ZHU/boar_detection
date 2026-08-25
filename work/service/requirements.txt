@@ -6,3 +6,4 @@ ultralytics>=8.0
 pillow>=10.0
 waitress>=3.0
 qtfaststart>=1.8
+imageio-ffmpeg==0.6.0

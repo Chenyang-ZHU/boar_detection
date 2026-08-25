@@ -61,4 +61,4 @@ curl -X POST http://127.0.0.1:5000/detect -F "image=@test.jpg"
 > ⚠️ `/opt/miniconda3`、`/opt/boar-detection` 是固定路径，解压路径不能改。
 > ⚠️ 服务经 systemd 单元自带的 `LD_LIBRARY_PATH` 使用 conda 的 libstdc++（目标系统 libstdc++ 太老，脚本已处理）。
 > ✅ **包内含生产服务器 waitress + 完整健壮性**（并发限流 429001 / 单请求超时 / 客户端断开中止 / 健康探活自愈），离线部署即加固版。离线包于 2026-08-23 重建并验证。
-> ✅ **视频输出已做 moov 前置（Web Fast Start）**：qtfaststart 已包含在环境里，输出 MP4 结构为 `ftyp→moov→mdat`，浏览器可流式在线播放（2026-08-24 重建）。
+> ✅ **视频输出为 H.264 编码 + moov 前置（Web Fast Start）**：环境内含 imageio-ffmpeg（libx264），输出 `ftyp→moov→mdat`，浏览器可在线流式播放（2026-08-25 重建）。

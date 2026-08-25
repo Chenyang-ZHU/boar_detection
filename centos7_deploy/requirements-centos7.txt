@@ -36,3 +36,4 @@ ultralytics==8.4.114
 flask==3.0.3
 waitress==3.0.2
 qtfaststart==1.8
+imageio-ffmpeg==0.6.0

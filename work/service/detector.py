@@ -21,6 +21,33 @@ try:
 except ImportError:
     _faststart_process = None
 
+# imageio-ffmpeg：内置静态 ffmpeg（含 libx264）。
+# OpenCV 输出的 mp4v（MPEG-4 Part 2）浏览器不认，必须重编码为 H.264 才能在线播放。
+try:
+    import imageio_ffmpeg
+    _FFMPEG_EXE = imageio_ffmpeg.get_ffmpeg_exe()
+except Exception:
+    _FFMPEG_EXE = None
+
+
+def _encode_h264_faststart(src, dst):
+    """用 ffmpeg(libx264) 把 src 重编码为 H.264 + moov 前置；成功返回 True"""
+    import subprocess
+    if _FFMPEG_EXE is None:
+        return False
+    cmd = [
+        _FFMPEG_EXE, "-y", "-i", src,
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+        "-pix_fmt", "yuv420p",
+        "-movflags", "+faststart",
+        dst,
+    ]
+    proc = subprocess.run(
+        cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+    )
+    return proc.returncode == 0 and os.path.exists(dst) and os.path.getsize(dst) > 0
+
+
 logger = logging.getLogger("detector")
 
 
@@ -367,6 +394,7 @@ class BoarDetector:
         tmp_in = None
         tmp_out = None
         fast_out = None
+        h264_out = None
         cap = None
         writer = None
         try:
@@ -448,18 +476,25 @@ class BoarDetector:
             cap.release()
             cap = None
 
-            # 7. moov 前置（Web Fast Start）：把 moov atom 挪到文件头，便于浏览器流式播放。
-            #    OpenCV VideoWriter 默认把 moov 写在文件尾部；qtfaststart 纯 Python 后处理挪到前面。
+            # 7. 后处理：优先重编码为 H.264 + moov 前置（浏览器可在线播放）。
+            #    OpenCV 输出是 mp4v（MPEG-4 Part 2），浏览器不认；用 ffmpeg(libx264) 重编码成 H.264。
+            #    降级链：H.264+faststart → mp4v+faststart(qtfaststart) → 原始文件
             read_path = tmp_out
-            if _faststart_process is not None:
+            h264_out = tmp_out + ".h264.mp4"
+            if _FFMPEG_EXE is not None and _encode_h264_faststart(tmp_out, h264_out):
+                read_path = h264_out
+                logger.info("视频已重编码为 H.264 + Fast Start")
+            elif _faststart_process is not None:
                 fast_out = tmp_out + ".fast.mp4"
                 try:
                     _faststart_process(tmp_out, fast_out)
                     read_path = fast_out
-                    logger.info("视频 moov 已前置（Fast Start）")
+                    logger.info("H.264 编码不可用，退回 mp4v + moov 前置（浏览器可能无法播放）")
                 except Exception as e:
                     logger.warning(f"moov 前置失败，返回原始文件: {e}")
                     read_path = tmp_out
+            else:
+                logger.warning("无可用后处理，返回原始 mp4v 文件")
 
             with open(read_path, "rb") as f:
                 video_bytes = f.read()
@@ -480,7 +515,7 @@ class BoarDetector:
             if cap is not None:
                 cap.release()
             # 清理临时文件
-            for path in (tmp_in, tmp_out, fast_out):
+            for path in (tmp_in, tmp_out, fast_out, h264_out):
                 if path and os.path.exists(path):
                     try:
                         os.remove(path)
