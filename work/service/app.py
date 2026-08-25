@@ -194,6 +194,8 @@ def _detect_video_file(video_data: bytes, is_closed, timeout: float) -> tuple:
             "X-Original-Duration": str(meta["original_duration"]),
             "X-Original-Size": str(meta["original_size"]),
             "X-Boar-Count": str(meta["boar_count"]),
+            "X-Boar-Present": "true" if meta["boar_present"] else "false",
+            "X-Boar-Avg-Conf": str(meta["avg_confidence"]),
         }
         return make_media_response(video_bytes, headers)
 

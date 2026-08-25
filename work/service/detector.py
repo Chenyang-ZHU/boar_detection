@@ -328,6 +328,7 @@ class BoarDetector:
             frames = []
             index = 0
             total_detections = 0
+            total_conf = 0.0
             t0 = time.time()
             while True:
                 self._check_abort(is_closed, deadline)
@@ -339,6 +340,7 @@ class BoarDetector:
                 result = self._infer(frame_rgb)
                 detections = self._parse_detections(result)
                 total_detections += len(detections)
+                total_conf += sum(d["confidence"] for d in detections)
 
                 frames.append({
                     "index": index,
@@ -359,6 +361,8 @@ class BoarDetector:
                 "frame_count": index,
                 "duration_sec": round(duration, 2),
                 "total_detections": total_detections,
+                "boar_present": total_detections > 0,
+                "avg_confidence": round(total_conf / total_detections, 4) if total_detections else 0.0,
                 "frames": frames,
             }
         finally:
@@ -454,6 +458,7 @@ class BoarDetector:
             t0 = time.time()
             frame_count = 0
             total_detections = 0
+            total_conf = 0.0
             while True:
                 self._check_abort(is_closed, deadline)
                 ret, frame = cap.read()
@@ -464,9 +469,10 @@ class BoarDetector:
                 frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 result = self._infer(frame_rgb)
 
-                # 累计野猪数量（全视频累计检出次数）
+                # 累计野猪数量（全视频累计检出次数）+ 置信度求和
                 if result.boxes is not None:
                     total_detections += len(result.boxes)
+                    total_conf += float(result.boxes.conf.sum())
 
                 # 画框（BGR）
                 frame = self._draw_boxes(frame, result)
@@ -515,6 +521,8 @@ class BoarDetector:
                 "processed_width": out_width,
                 "processed_height": out_height,
                 "boar_count": total_detections,
+                "boar_present": total_detections > 0,
+                "avg_confidence": round(total_conf / total_detections, 4) if total_detections else 0.0,
             }
             return video_bytes, meta
 
