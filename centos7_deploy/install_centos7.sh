@@ -126,6 +126,12 @@ chmod +x "$DEPLOY_DIR/boar_health.sh"
 # 一键诊断脚本（甲方可直接运行，输出排查报告）
 cp "$SCRIPT_DIR/boar_diag.sh" "$DEPLOY_DIR/boar_diag.sh"
 chmod +x "$DEPLOY_DIR/boar_diag.sh"
+# 双击运行启动器（装到应用菜单 + root 桌面；甲方也可拷到自己的桌面）
+cp "$SCRIPT_DIR/boar_diag.desktop" "$DEPLOY_DIR/boar_diag.desktop"
+mkdir -p /usr/share/applications /root/Desktop
+cp "$DEPLOY_DIR/boar_diag.desktop" /usr/share/applications/
+cp "$DEPLOY_DIR/boar_diag.desktop" /root/Desktop/ 2>/dev/null || true
+chmod +x /usr/share/applications/boar_diag.desktop /root/Desktop/boar_diag.desktop 2>/dev/null || true
 cat > /etc/cron.d/boar_health << 'EOF'
 * * * * * root /usr/local/bin/boar_health.sh
 EOF

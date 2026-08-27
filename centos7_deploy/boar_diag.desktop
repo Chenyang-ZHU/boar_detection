@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=野猪服务诊断
+Name[zh_CN]=野猪服务诊断
+Comment=一键检查野猪检测服务，生成排查报告（双击即可）
+Exec=bash -c "bash /opt/boar-detection/boar_diag.sh; echo; echo '==== 诊断完成，按回车键关闭窗口 ===='; read"
+Icon=utilities-system-monitor
+Terminal=true
+Categories=Utility;
