@@ -123,6 +123,9 @@ cp "$SCRIPT_DIR/boar_health.sh" /usr/local/bin/boar_health.sh
 cp "$SCRIPT_DIR/boar_health.sh" "$DEPLOY_DIR/boar_health.sh"   # 放进部署目录供离线打包
 chmod +x /usr/local/bin/boar_health.sh
 chmod +x "$DEPLOY_DIR/boar_health.sh"
+# 一键诊断脚本（甲方可直接运行，输出排查报告）
+cp "$SCRIPT_DIR/boar_diag.sh" "$DEPLOY_DIR/boar_diag.sh"
+chmod +x "$DEPLOY_DIR/boar_diag.sh"
 cat > /etc/cron.d/boar_health << 'EOF'
 * * * * * root /usr/local/bin/boar_health.sh
 EOF
