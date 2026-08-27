@@ -152,6 +152,7 @@ curl -X POST http://{host}:5000/detect/video/coords \
 | `frame_count` | 总帧数 |
 | `duration_sec` | 视频时长（秒） |
 | `total_detections` | 全视频累计检出次数（所有帧检出数累加） |
+| `max_detections` | **单帧最多野猪数**（视频里单帧识别最多的数目，峰值） |
 | `boar_present` | 是否有野猪（`true`/`false`） |
 | `avg_confidence` | 检出平均置信度（0~1） |
 | `frames[]` | 逐帧结果 |
@@ -180,7 +181,7 @@ curl -s -o /tmp/out.mp4 -m 120 \
 | `X-Original-Height` | 原始帧高（像素） |
 | `X-Original-Duration` | 原始时长（秒） |
 | `X-Original-Size` | 原始文件大小（字节） |
-| `X-Boar-Count` | **全视频累计检出次数**（所有帧检出数累加） |
+| `X-Boar-Count` | **单帧最多野猪数**（视频里单帧识别最多的数目，峰值） |
 | `X-Boar-Present` | 是否有野猪（`true`/`false`） |
 | `X-Boar-Avg-Conf` | 检出平均置信度（0~1） |
 
