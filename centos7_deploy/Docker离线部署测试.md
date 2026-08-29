@@ -2,6 +2,15 @@
 
 在本机用 Docker + **本机已有的 `centos:7` 镜像**（glibc 2.17），模拟真实 CentOS 7，验证离线包能解压、部署、起服务、推理。**仅用于本地验证**；真实机器直接用 `deploy_offline.sh` 部署（见 `离线部署README.md`）。
 
+## 🚀 一键验证（推荐，无需手动操作）
+
+```bash
+bash centos7_deploy/docker_verify.sh            # 用 deploy_offline.sh 部署验证
+bash centos7_deploy/docker_verify.sh usb        # 模拟 U盘 一键安装验证
+```
+
+自动完成：起容器 → 装 systemctl 垫片 → 部署 → 验证接口（/health /detect /video/coords /video 编码）→ 清理。全部 ✅ 即离线包可用。
+
 > 流程：启动容器 → `docker exec` 进入容器终端 → 依次运行 `prepare_shim.sh` 和 `deploy_offline.sh`。
 >
 > 📌 **当前离线包是加固版**（2026-08-23 重建，~971MB）：内含 **waitress 生产服务器 + 完整健壮性**（并发限流 429001 / 单请求超时 / 客户端断开中止 / 健康探活自愈）。离线部署后即为加固版，可用第 6.5 节验证健壮性。
