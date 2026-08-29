@@ -35,10 +35,24 @@ sudo cp /mnt/usb/deploy_offline.sh /opt/
 sudo umount /mnt/usb    # 或卸载自动挂载点 /run/media/<用户名>/<卷标>
 ```
 
-## 部署
+## 部署（两种方式）
+
+### 方式一：U盘一键安装（给小白，无需技术）
+
+U盘 里放 `install_usb.sh` + `boar_centos7_offline.tar.gz` + `安装说明.txt`，交给对方：
+
+```
+插入U盘 → 双击 install_usb.sh → 选「在终端中运行」→ 输管理员密码 → 等「✅ 安装成功」
+```
+
+- ⚠️ **U盘 必须格式化为 ext4**（FAT32 无执行权限，双击失败）
+- 安装后桌面上有「野猪服务诊断」双击图标（出问题一键出报告）
+- 已容器验证通过
+
+### 方式二：终端部署（技术员用）
 
 ```bash
-# 磁盘余量检查：965MB 压缩包解压后约 4GB
+# 磁盘余量检查：999MB 压缩包解压后约 4GB
 df -h /opt
 
 sudo bash /opt/deploy_offline.sh /opt/boar_centos7_offline.tar.gz
