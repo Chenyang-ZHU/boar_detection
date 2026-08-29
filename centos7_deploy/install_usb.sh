@@ -45,7 +45,7 @@ fi
 
 # ---------- [1/4] 解压 ----------
 echo ""
-echo "===== [1/4] 解压离线包（约需 1-3 分钟）====="
+echo "===== [1/5] 解压离线包（约需 1-3 分钟）====="
 tar -xzf "$TARBALL" -C /opt
 if [ ! -x "$PY" ]; then
   echo "❌ 解压失败或包损坏，请联系技术人员"
@@ -57,7 +57,7 @@ echo "✅ 已解压到 /opt"
 
 # ---------- [2/4] 配置开机自启 ----------
 echo ""
-echo "===== [2/4] 配置开机自启 ====="
+echo "===== [2/5] 配置开机自启 ====="
 sed -e "s|@PY@|$PY|g" \
     -e "s|@DEPLOY_DIR@|$DEPLOY_DIR|g" \
     -e "s|@CONDA_LIB@|$MINICONDA_DIR/envs/boar/lib|g" \
@@ -68,7 +68,7 @@ echo "✅ 开机自启已配置"
 
 # ---------- [3/4] 一键诊断脚本 + 桌面图标 ----------
 echo ""
-echo "===== [3/4] 安装诊断工具 ====="
+echo "===== [3/5] 安装诊断工具 ====="
 if [ -f "$DEPLOY_DIR/boar_diag.sh" ]; then
   cp "$DEPLOY_DIR/boar_diag.sh" /usr/local/bin/boar_diag.sh
   chmod +x /usr/local/bin/boar_diag.sh
@@ -81,9 +81,29 @@ if [ -f "$DEPLOY_DIR/boar_diag.sh" ]; then
   echo "✅ 诊断工具已装（桌面有「野猪服务诊断」图标）"
 fi
 
-# ---------- [4/4] 健康检查 ----------
+# ---------- [4/5] 健壮性加固（自愈 + 日志限容 + 临时清理） ----------
 echo ""
-echo "===== [4/4] 启动服务并检查（最多等 40 秒）====="
+echo "===== [4/5] 健壮性加固 ====="
+mkdir -p /etc/cron.d
+# 健康探活（服务卡死自动重启）
+if [ -f "$DEPLOY_DIR/boar_health.sh" ]; then
+  cp "$DEPLOY_DIR/boar_health.sh" /usr/local/bin/boar_health.sh
+  chmod +x /usr/local/bin/boar_health.sh
+  echo "* * * * * root /usr/local/bin/boar_health.sh" > /etc/cron.d/boar_health
+  chmod 644 /etc/cron.d/boar_health
+fi
+# 视频临时文件清理
+echo "*/30 * * * * root find /tmp -maxdepth 1 -name 'boar_detect_*.mp4' -mmin +10 -delete" > /etc/cron.d/boar_tmp_clean
+chmod 644 /etc/cron.d/boar_tmp_clean
+# journald 日志限容
+mkdir -p /etc/systemd/journald.conf.d
+printf '[Journal]\nSystemMaxUse=500M\n' > /etc/systemd/journald.conf.d/boar.conf
+systemctl restart systemd-journald 2>/dev/null || true
+echo "✅ 加固完成（自愈探活 + 日志限容 + 临时清理）"
+
+# ---------- [5/5] 健康检查 ----------
+echo ""
+echo "===== [5/5] 启动服务并检查（最多等 40 秒）====="
 ready=""
 for i in $(seq 1 8); do
   if curl -s -m 3 http://127.0.0.1:5000/health >/dev/null 2>&1; then
