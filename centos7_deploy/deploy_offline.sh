@@ -80,6 +80,18 @@ mkdir -p /etc/systemd/journald.conf.d
 printf '[Journal]\nSystemMaxUse=500M\n' > /etc/systemd/journald.conf.d/boar.conf
 systemctl restart systemd-journald 2>/dev/null || true
 echo "✅ 加固完成"
+# 一键诊断脚本 + 桌面图标（与 install_usb.sh 一致）
+if [ -f "$DEPLOY_DIR/boar_diag.sh" ]; then
+  cp "$DEPLOY_DIR/boar_diag.sh" /usr/local/bin/boar_diag.sh
+  chmod +x /usr/local/bin/boar_diag.sh
+  mkdir -p /usr/share/applications /root/Desktop
+  if [ -f "$DEPLOY_DIR/boar_diag.desktop" ]; then
+    cp "$DEPLOY_DIR/boar_diag.desktop" /usr/share/applications/ 2>/dev/null || true
+    cp "$DEPLOY_DIR/boar_diag.desktop" /root/Desktop/ 2>/dev/null || true
+    chmod +x /usr/share/applications/boar_diag.desktop /root/Desktop/boar_diag.desktop 2>/dev/null || true
+  fi
+  echo "✅ 诊断工具已装（/usr/local/bin/boar_diag.sh + 桌面图标）"
+fi
 
 # ---------- [3/4] 健康检查 ----------
 echo "===== [3/4] 健康检查（最多等 40s：冷启动需加载模型）====="
