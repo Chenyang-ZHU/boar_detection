@@ -145,22 +145,55 @@ out "  内存 / Memory: $MEM"
 DISK=$(df -h / 2>/dev/null | awk 'NR==2{print $3" used / "$2" total ("$5")"}')
 out "  磁盘 / Disk: $DISK"
 
-# ---------- 7. 接口快速测试 / API quick test ----------
+# ---------- 7. 图片检测测试 / Image detection test ----------
 out ""
-out "===== 7. 接口测试 / API Test ====="
+out "===== 7. 图片检测测试 / Image Detection Test ====="
 if [ -n "$PY" ] && [ -n "$DEPLOY" ]; then
-  TEST=$($PY - << PYEOF 2>&1
-import urllib.request, json
+  IMGTEST=$($PY - << PYEOF 2>&1
+import urllib.request, json, glob, os
+import numpy as np, cv2
+BASE = "$URL"
+DEPLOY = "$DEPLOY"
+
+# 找测试图（部署目录 / U盘），找不到则用纯色图测接口
+test_img = None
+for pat in [os.path.join(DEPLOY, "test_boar_640.jpg"),
+            os.path.join(DEPLOY, "test.jpg"),
+            os.path.join(DEPLOY, "*.jpg")]:
+    ms = glob.glob(pat)
+    if ms:
+        test_img = ms[0]
+        break
+
+if test_img:
+    img_bytes = open(test_img, "rb").read()
+    source = "USB/deploy image: %s" % test_img
+else:
+    img = np.full((640, 640, 3), 128, np.uint8)
+    ok, buf = cv2.imencode(".jpg", img)
+    img_bytes = buf.tobytes()
+    source = "generated-gray (no test image found)"
+
+# POST /detect
+boundary = "----boardiag"
+body = (("--%s\r\nContent-Disposition: form-data; name=\"image\"; filename=\"t.jpg\"\r\n"
+         "Content-Type: image/jpeg\r\n\r\n") % boundary).encode() + img_bytes
+body += ("\r\n--%s--\r\n" % boundary).encode()
 try:
-    d = json.load(urllib.request.urlopen("$URL/health", timeout=5))
-    print("API_OK")
+    req = urllib.request.Request(BASE + "/detect", data=body,
+                                 headers={"Content-Type": "multipart/form-data; boundary=%s" % boundary})
+    d = json.load(urllib.request.urlopen(req, timeout=30))
+    n = len(d["data"]["detections"]) if d.get("data") else 0
+    print("IMAGE_OK source=%s code=%s detections=%d" % (source, d["code"], n))
+    if test_img and n == 0:
+        print("  WARNING: test image used but no boar detected (low confidence?)")
 except Exception as e:
-    print("API_FAIL", e)
+    print("IMAGE_FAIL", e)
 PYEOF
 )
-  out "  $TEST"
+  echo "$IMGTEST" | tee -a "$REPORT"
 else
-  out "  ⚠️ 跳过接口测试（缺 python 或部署目录）/ Skipped API test (no python or deploy dir)"
+  out "  ⚠️ 跳过图片检测测试（缺 python 或部署目录）/ Skipped image test (no python or deploy dir)"
 fi
 
 # ---------- 8. 视频编码检查 / Video codec check ----------

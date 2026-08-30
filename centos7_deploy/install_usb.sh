@@ -90,6 +90,12 @@ if [ -f "$DEPLOY_DIR/boar_diag.sh" ]; then
   echo "✅ 诊断工具已装（桌面有「野猪服务诊断」图标）"
   echo "✅ Diagnostic tool installed (desktop icon: Boar Service Diagnostic)"
 fi
+# 拷贝测试图片到部署目录（供诊断工具做真实检出测试）
+# Copy test image to deploy dir (for diagnostic real-detection test)
+if [ -f "$SCRIPT_DIR/test_boar_640.jpg" ]; then
+  cp "$SCRIPT_DIR/test_boar_640.jpg" "$DEPLOY_DIR/test_boar_640.jpg"
+  echo "✅ 测试图片已拷贝 / Test image copied"
+fi
 
 # ---------- [4/5] 健壮性加固 / Hardening ----------
 echo ""
