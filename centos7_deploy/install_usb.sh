@@ -19,10 +19,27 @@
 # ============================================================
 set -u
 
-# ---------- 自动提权（非 root 则用 sudo 重新运行）/ Auto elevate (re-run with sudo if not root) ----------
+# ---------- 自动提权 / Auto elevate (sudo first, fall back to su) ----------
+# 非 root 时：优先 sudo（输入当前用户密码）；若当前用户不在 sudoers，
+# sudo 失败 → 改用 su（输入 root 密码）。两种都试过仍失败则提示并退出。
 if [ "$(id -u)" -ne 0 ]; then
-  echo "需要管理员权限，请输入密码... / Admin password required, please enter..."
-  exec sudo bash "$0" "$@"
+  echo "需要管理员权限，请输入密码... / Admin privileges required, please enter password..."
+  if command -v sudo >/dev/null 2>&1; then
+    sudo bash "$0" "$@"
+    rc=$?
+    if [ $rc -eq 0 ]; then
+      exit 0
+    fi
+    echo "⚠️ sudo 失败（当前用户可能不在 sudoers），改用 root 密码... / sudo failed (user may not be in sudoers), trying root password..."
+  else
+    echo "未安装 sudo，改用 root 密码... / sudo not installed, using root password..."
+  fi
+  exec su -c "bash '$0' $*"
+  # 若 su 也失败（密码错误等），到这里才退出
+  echo "❌ 提权失败，请联系技术人员 / Elevation failed, contact technical support"
+  echo "按回车键关闭窗口 / Press Enter to close"
+  read _
+  exit 1
 fi
 
 # ---------- 定位 U盘 里的离线包 / Locate the offline package on the USB ----------
