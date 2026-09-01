@@ -43,6 +43,12 @@ dist/
 build/
 *.egg
 
+# Windows 打包产物（在 Windows 上构建生成，不入库）
+windows/installer/BoarDetector.exe
+windows/boar_ui/*.spec
+windows/boar_ui/build/
+windows/boar_ui/dist/
+
 # 系统文件
 .DS_Store
 Thumbs.db
