@@ -14,8 +14,8 @@ MODEL_PATH = "/opt/boar-detection/best.pt"
 # 推理设备（CentOS 7 无 GPU，用 CPU）
 DEVICE = "cpu"
 
-# 置信度阈值
-CONFIDENCE_THRESHOLD = 0.25
+# 置信度阈值（2026-08-30 调优：0.25→0.45，误检率从 20% 降到 12.9%，召回仍 97%）
+CONFIDENCE_THRESHOLD = 0.45
 
 # NMS IoU 阈值
 IOU_THRESHOLD = 0.45

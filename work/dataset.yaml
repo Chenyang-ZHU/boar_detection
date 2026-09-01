@@ -1,4 +1,4 @@
-path: ./merged
+path: /home/zcy/Documents/project/boar_detection/work/merged
 train: train.txt
 val: val.txt
 test: test.txt

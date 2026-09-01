@@ -30,16 +30,26 @@ echo ""
 # ---------- 准备模拟 U盘 / 挂载目录 ----------
 WORKDIR="/tmp/boar_docker_verify"
 rm -rf "$WORKDIR"; mkdir -p "$WORKDIR"
-cp "$OFFLINE" "$WORKDIR/"
 cp "$SCRIPT_DIR/prepare_shim.sh" "$WORKDIR/"
+
+# 拆包优先（boar_env.tar.gz + boar_scripts.tar.gz），否则回退旧单包
+OFFLINE_DIR="$(dirname "$OFFLINE")"
+if [ -f "$OFFLINE_DIR/boar_env.tar.gz" ] && [ -f "$OFFLINE_DIR/boar_scripts.tar.gz" ]; then
+  cp "$OFFLINE_DIR/boar_env.tar.gz" "$WORKDIR/boar_env.tar.gz"
+  cp "$OFFLINE_DIR/boar_scripts.tar.gz" "$WORKDIR/boar_scripts.tar.gz"
+  PACKAGE_DESC="拆包 env+scripts"
+else
+  cp "$OFFLINE" "$WORKDIR/"
+  PACKAGE_DESC="旧单包 $(basename "$OFFLINE")"
+fi
 
 # 模拟 U盘 结构（install_usb 方式用）
 if [ "$METHOD" = "usb" ]; then
   cp "$SCRIPT_DIR/install_usb.sh" "$WORKDIR/"
-  echo "✅ 已准备 U盘 模拟目录: $WORKDIR"
+  echo "✅ 已准备 U盘 模拟目录 ($PACKAGE_DESC): $WORKDIR"
 else
   cp "$SCRIPT_DIR/deploy_offline.sh" "$WORKDIR/"
-  echo "✅ 已准备部署目录: $WORKDIR"
+  echo "✅ 已准备部署目录 ($PACKAGE_DESC): $WORKDIR"
 fi
 
 # ---------- 启动容器 ----------
@@ -57,10 +67,15 @@ docker exec "$CONTAINER" bash /bundle/prepare_shim.sh 2>&1 | tail -1
 # ---------- 执行部署 ----------
 echo ""
 echo "=== 执行部署 ($METHOD) ==="
+# 注意：
+#  1) 不用 head 截断——上游 docker exec 会收到 SIGPIPE，pipefail 误判失败
+#  2) install_usb.sh 结尾有 `read _`（等回车，给真机交互用）；非交互 docker exec 下
+#     read 收到 EOF 返回 1。故安装步骤加 `|| true` 容忍退出码，
+#     真正成败以后续「验证服务接口」为准。
 if [ "$METHOD" = "usb" ]; then
-  docker exec "$CONTAINER" bash /bundle/install_usb.sh 2>&1 | grep -E "=====|✅ 安装成功|✅ 已解压|❌" | head -15
+  docker exec "$CONTAINER" bash /bundle/install_usb.sh 2>&1 | grep -E "=====|✅ 安装成功|✅ 已解压|❌" || true
 else
-  docker exec "$CONTAINER" bash -c 'cd /bundle && bash deploy_offline.sh boar_centos7_offline.tar.gz' 2>&1 | grep -E "=====|✅ 离线部署完成|❌|已解压" | head -12
+  docker exec "$CONTAINER" bash -c 'cd /bundle && bash deploy_offline.sh boar_centos7_offline.tar.gz' 2>&1 | grep -E "=====|✅ 离线部署完成|❌|已解压" || true
 fi
 
 # ---------- 验证接口 + 编码 ----------

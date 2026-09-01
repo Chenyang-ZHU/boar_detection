@@ -16,16 +16,22 @@ data/
 # 文档
 野猪检测v1.docx
 
-# 数据集原始图片（只上传标签，不上传图片）
-work/dataset/train/images/
-work/dataset/val/images/
-work/merged/images/
+# ---------- 训练相关大产物（不上传远端，保留 work/service 与小工具） ----------
+# 训练/合并数据集
+work/dataset/
+work/merged/
+work/prepare_dataset/
 
-# 推理结果
-work/inference_results/
+# 训练结果（两处 runs）
+runs/
+work/runs/
 
 # 自动标注临时文件
 work/auto_label/
+work/auto_label_new/
+
+# 推理结果
+work/inference_results/
 
 # Python
 __pycache__/

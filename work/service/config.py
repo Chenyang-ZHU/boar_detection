@@ -9,14 +9,15 @@ PORT = 5000
 HOST = "0.0.0.0"
 
 # 模型路径（相对于本项目根目录，也支持绝对路径）
+# 2026-08-30: 换用新模型 boar_v3（6686张+反例训练，误检减半），阈值调至 0.45
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-MODEL_PATH = os.path.join(BASE_DIR, "work", "runs", "detect", "boar_detection", "yolov8n_merged_final", "weights", "best.pt")
+MODEL_PATH = os.path.join(BASE_DIR, "work", "runs", "detect", "boar_detection", "yolov8n_boar_v3", "weights", "best.pt")
 
 # 推理设备（"cpu" 或 "cuda:0"，设为 None 则自动选择）
 DEVICE = None  # 自动检测 GPU，无 GPU 则用 CPU
 
 # 置信度阈值（低于此值的检测结果将被过滤）
-CONFIDENCE_THRESHOLD = 0.25
+CONFIDENCE_THRESHOLD = 0.45
 
 # NMS IoU 阈值
 IOU_THRESHOLD = 0.45

@@ -23,20 +23,42 @@ MINICONDA_DIR="/opt/miniconda3"
 DEPLOY_DIR="/opt/boar-detection"
 PY="$MINICONDA_DIR/envs/boar/bin/python"
 
+# 新版拆包（优先）：boar_env.tar.gz + boar_scripts.tar.gz 与脚本同目录；兼容旧版单包
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ENV_TAR="$SCRIPT_DIR/boar_env.tar.gz"
+SCRIPTS_TAR="$SCRIPT_DIR/boar_scripts.tar.gz"
+
 # ---------- 检查 ----------
 if [ "$(id -u)" -ne 0 ]; then
   echo "❌ 请用 root 运行: sudo bash deploy_offline.sh"
   exit 1
 fi
-if [ ! -f "$TARBALL" ]; then
-  echo "❌ 找不到离线包: $TARBALL"
-  echo "   用法: sudo bash deploy_offline.sh <离线包路径>"
+if [ ! -f "$ENV_TAR" ] && [ ! -f "$TARBALL" ]; then
+  echo "❌ 找不到环境包（需 boar_env.tar.gz，或旧版 boar_centos7_offline.tar.gz）"
+  echo "   用法: sudo bash deploy_offline.sh [离线包路径]"
+  exit 1
+fi
+if [ ! -f "$SCRIPTS_TAR" ] && [ ! -f "$TARBALL" ]; then
+  echo "❌ 找不到脚本包（需 boar_scripts.tar.gz，或旧版 boar_centos7_offline.tar.gz）"
   exit 1
 fi
 
-# ---------- [1/4] 解压 ----------
-echo "===== [1/4] 解压离线包到 /opt ====="
-tar -xzf "$TARBALL" -C /opt
+# ---------- [1/4] 解压（环境 + 脚本） ----------
+echo "===== [1/4] 解压（环境 + 脚本）到 /opt ====="
+# 环境：python 已存在则跳过（支持重复部署/升级）
+if [ -x "$PY" ]; then
+  echo "✅ 环境已存在，跳过解压: $PY"
+elif [ -f "$ENV_TAR" ]; then
+  tar -xzf "$ENV_TAR" -C /opt
+elif [ -f "$TARBALL" ]; then
+  tar -xzf "$TARBALL" -C /opt miniconda3
+fi
+# 脚本：总是覆盖解压（保证拿到最新版本）
+if [ -f "$SCRIPTS_TAR" ]; then
+  tar -xzf "$SCRIPTS_TAR" -C /opt
+elif [ -f "$TARBALL" ]; then
+  tar -xzf "$TARBALL" -C /opt boar-detection
+fi
 if [ ! -x "$PY" ]; then
   echo "❌ 解压后未找到环境 $PY，包可能损坏或路径不符"
   exit 1

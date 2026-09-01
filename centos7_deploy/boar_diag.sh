@@ -23,14 +23,26 @@ REPORT="/tmp/boar_diag_report.txt"
 out() { echo "$@" | tee -a "$REPORT"; }
 
 # 自动探测部署路径和 python / Auto-detect deploy path and python
+# 同时支持系统级(/opt)与用户级(~/, 任意用户名)两种安装位置
 DEPLOY=""
-if [ -d /opt/boar-detection ]; then DEPLOY=/opt/boar-detection; fi
-if [ -d /home/nvidia/boar-detection ]; then DEPLOY=/home/nvidia/boar-detection; fi
+for d in /opt/boar-detection /home/*/boar-detection "$HOME/boar-detection"; do
+  [ -d "$d" ] && DEPLOY="$d" && break
+done
 
 PY=""
-for p in /opt/miniconda3/envs/boar/bin/python /home/nvidia/boar-detection/venv/bin/python python3; do
+for p in /opt/miniconda3/envs/boar/bin/python \
+         /home/*/miniconda3/envs/boar/bin/python "$HOME/miniconda3/envs/boar/bin/python" \
+         /home/*/boar-detection/venv/bin/python python3; do
   command -v "$p" >/dev/null 2>&1 && PY="$p" && break
 done
+
+# 用户级安装（~/boar-detection）时 systemctl/journalctl 需加 --user
+SCOPE=""
+case "$DEPLOY" in
+  /home/*) SCOPE="--user" ;;
+esac
+# 双击启动的环境可能缺 XDG_RUNTIME_DIR，systemctl --user 会连不上用户管理器，这里补上
+[ -n "${XDG_RUNTIME_DIR:-}" ] || export XDG_RUNTIME_DIR="/run/user/$(id -u)"
 
 URL="http://127.0.0.1:5000"
 
@@ -38,20 +50,23 @@ echo "======================================================" | tee -a "$REPORT"
 echo "  野猪检测服务 · 一键诊断报告" | tee -a "$REPORT"
 echo "  Boar Detection Service - Diagnostic Report" | tee -a "$REPORT"
 echo "  生成时间 / Time: $(date '+%F %T')" | tee -a "$REPORT"
+echo "  部署模式 / Mode: $([ "$SCOPE" = "--user" ] && echo "用户级 User" || echo "系统级 System")" | tee -a "$REPORT"
+echo "  部署目录 / Deploy: ${DEPLOY:-未找到 not found}" | tee -a "$REPORT"
 echo "======================================================" | tee -a "$REPORT"
 
 # ---------- 1. 服务状态 / Service status ----------
 out ""
 out "===== 1. 服务状态 / Service Status ====="
 if command -v systemctl >/dev/null 2>&1; then
-  ACTIVE=$(systemctl is-active boar_detection 2>/dev/null)
-  if [ "$ACTIVE" = "active" ]; then
-    out "  ✅ 服务运行中 (active) / Service running"
+  ACTIVE=$(systemctl $SCOPE is-active boar_detection 2>/dev/null)
+  # 用户级可能没有 systemd 用户管理器（服务靠 start.sh 跑），此时用 /health 兜底判断
+  if [ "$ACTIVE" = "active" ] || { [ -z "$ACTIVE" ] && curl -s -m 3 http://127.0.0.1:5000/health >/dev/null 2>&1; }; then
+    out "  ✅ 服务运行中 / Service running"
   else
     out "  ❌ 服务未运行 ($ACTIVE) / Service not running"
   fi
-  out "  重启次数 / Restarts: $(systemctl show boar_detection -p NRestarts --value 2>/dev/null)"
-  out "  最近启动 / Started: $(systemctl show boar_detection -p ActiveEnterTimestamp --value 2>/dev/null)"
+  out "  重启次数 / Restarts: $(systemctl $SCOPE show boar_detection -p NRestarts --value 2>/dev/null)"
+  out "  最近启动 / Started: $(systemctl $SCOPE show boar_detection -p ActiveEnterTimestamp --value 2>/dev/null)"
 else
   out "  ⚠️ 无法读取 systemctl（容器或无 systemd 环境）/ Cannot read systemctl (container or no systemd)"
 fi
@@ -76,7 +91,7 @@ fi
 out ""
 out "===== 3. 服务日志（最近错误）/ Service Log (recent errors) ====="
 if command -v journalctl >/dev/null 2>&1; then
-  ERR=$(journalctl -u boar_detection --no-pager -n 100 2>/dev/null | grep -iE "error|Traceback|Exception|Failed|Killed" | tail -5)
+  ERR=$(journalctl $SCOPE -u boar_detection --no-pager -n 100 2>/dev/null | grep -iE "error|Traceback|Exception|Failed|Killed" | tail -5)
   if [ -n "$ERR" ]; then
     out "  ⚠️ 发现以下错误 / Errors found:"
     echo "$ERR" | tee -a "$REPORT"

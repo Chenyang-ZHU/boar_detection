@@ -8,8 +8,8 @@
 #
 # 生成 / Produces:
 #     /home/zcy/boar-centos7-offline/野猪检测安装包_YYYYMMDDHHMM.zip
-#     内容：boar_centos7_offline.tar.gz + install_usb.sh + prepare_shim.sh
-#           + test_boar_640.jpg + 安装说明.txt
+#     内容：boar_env.tar.gz（环境，一次性构建）+ boar_scripts.tar.gz（脚本，每次改动重建）
+#           + install_usb.sh + prepare_shim.sh + test_boar_640.jpg + 安装说明.txt
 # ============================================================
 set -euo pipefail
 
@@ -19,15 +19,18 @@ REPO_ROOT="$(dirname "$SCRIPT_DIR")"
 TS=$(date '+%Y%m%d%H%M')
 NEW_ZIP="$OFFLINE_DIR/野猪检测安装包_$TS.zip"
 
-TARBALL="$OFFLINE_DIR/boar_centos7_offline.tar.gz"
+ENV_TAR="$OFFLINE_DIR/boar_env.tar.gz"
+SCRIPTS_TAR="$OFFLINE_DIR/boar_scripts.tar.gz"
 
-echo "=== 检查离线包 ==="
-[ -f "$TARBALL" ] || { echo "❌ 找不到离线包: $TARBALL"; exit 1; }
-ls -lh "$TARBALL" | awk '{print "  离线包: " $5, $6, $7}'
+echo "=== 检查离线包（拆包格式）==="
+[ -f "$ENV_TAR" ] || { echo "❌ 找不到环境包: $ENV_TAR"; exit 1; }
+[ -f "$SCRIPTS_TAR" ] || { echo "❌ 找不到脚本包: $SCRIPTS_TAR"; exit 1; }
+ls -lh "$ENV_TAR" "$SCRIPTS_TAR" | awk '{print "  " $5, $6, $7, $9}'
 
-echo "=== 暂存 5 个交付文件 ==="
+echo "=== 暂存 6 个交付文件 ==="
 WORK=$(mktemp -d)
-cp "$TARBALL" "$WORK/boar_centos7_offline.tar.gz"
+cp "$ENV_TAR" "$WORK/boar_env.tar.gz"
+cp "$SCRIPTS_TAR" "$WORK/boar_scripts.tar.gz"
 cp "$SCRIPT_DIR/install_usb.sh" "$WORK/"
 cp "$SCRIPT_DIR/prepare_shim.sh" "$WORK/"
 # 测试图：优先离线目录，否则仓库
@@ -52,7 +55,8 @@ done
 echo "=== 打包 ==="
 cd "$WORK"
 zip -q "$NEW_ZIP" \
-  boar_centos7_offline.tar.gz \
+  boar_env.tar.gz \
+  boar_scripts.tar.gz \
   install_usb.sh \
   prepare_shim.sh \
   test_boar_640.jpg \

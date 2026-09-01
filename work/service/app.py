@@ -225,7 +225,7 @@ def health():
     return jsonify({
         "status": "ok",
         "model_loaded": detector.model is not None,
-        "model": "yolov8n_merged_final",
+        "model": "yolov8n_boar_v3",
         "device": detector.device,
         "uptime_seconds": uptime,
         "busy_requests": config.MAX_INFERENCE_WORKERS - _inference_semaphore._value,

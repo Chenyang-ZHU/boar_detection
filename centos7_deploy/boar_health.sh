@@ -16,6 +16,8 @@ set -u
 
 URL="http://127.0.0.1:5000/health"
 SERVICE="boar_detection"
+# 系统级安装为空；用户级安装时 install 脚本会改写为 "--user"
+SCOPE=""
 LOG="/var/log/boar_health.log"
 
 # 通用健康检查函数（按可用工具降级）
@@ -30,12 +32,15 @@ else
   check() { timeout 5 bash -c "exec 3<>/dev/tcp/127.0.0.1/5000" 2>/dev/null; }
 fi
 
+# 用户级安装需 XDG_RUNTIME_DIR 才能连用户会话总线（cron 环境默认没有）
+[ -z "${XDG_RUNTIME_DIR:-}" ] && export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+
 # 探测健康：5 秒内无响应视为异常
 if ! check; then
   # 仅当服务处于 active 状态才重启（避免重启被手动停止的服务）
-  if systemctl is-active --quiet "$SERVICE"; then
+  if systemctl $SCOPE is-active --quiet "$SERVICE"; then
     echo "$(date '+%F %T') 健康检查失败（超时/无响应），重启 $SERVICE" >> "$LOG" 2>/dev/null || true
-    systemctl restart "$SERVICE"
+    systemctl $SCOPE restart "$SERVICE"
   else
     echo "$(date '+%F %T') 健康检查失败，但 $SERVICE 非 active，不干预" >> "$LOG" 2>/dev/null || true
   fi

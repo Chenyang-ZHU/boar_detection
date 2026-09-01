@@ -1,0 +1,620 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>野猪标注修正工具</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #1a1a2e; color: #eee; height: 100vh; display: flex; flex-direction: column;
+            user-select: none;
+        }
+
+        /* ===== Header ===== */
+        .header {
+            background: #16213e; padding: 8px 16px; display: flex; align-items: center;
+            gap: 12px; border-bottom: 2px solid #0f3460; flex-shrink: 0;
+        }
+        .header h1 { font-size: 1rem; color: #e94560; white-space: nowrap; }
+        .header select {
+            padding: 5px 10px; border: 1px solid #0f3460; border-radius: 5px; background: #0f3460;
+            color: #eee; font-size: 0.8rem; cursor: pointer;
+        }
+
+        /* ===== Main (sidebar + canvas) ===== */
+        .main { display: flex; flex: 1; overflow: hidden; }
+
+        .sidebar { width: 200px; background: #16213e; border-right: 1px solid #0f3460; display: flex; flex-direction: column; flex-shrink: 0; }
+        .sidebar-header { padding: 8px 12px; border-bottom: 1px solid #0f3460; font-size: 0.8rem; color: #aaa; }
+        .sidebar-header .count { color: #e94560; }
+        .image-list { flex: 1; overflow-y: auto; padding: 4px; }
+        .image-item {
+            padding: 5px 8px; margin-bottom: 2px; border-radius: 3px; cursor: pointer;
+            font-size: 0.75rem; background: #0f3460; color: #bbb; display: flex; justify-content: space-between; align-items: center;
+        }
+        .image-item:hover { background: #1a4a7a; }
+        .image-item.active { background: #e94560; color: #fff; font-weight: bold; box-shadow: 0 0 6px rgba(233,69,96,0.5); }
+        .image-item .badge { font-size: 0.6rem; padding: 1px 5px; border-radius: 3px; background: #2d8a4e; color: #fff; }
+        .image-item .badge.empty { background: #555; }
+        .image-item .badge.val { background: #e67e22; }
+        .image-item .badge.unassigned { background: #555; }
+
+        .workspace { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+        .canvas-container {
+            position: relative; flex: 1; display: flex; align-items: center; justify-content: center;
+            overflow: auto; padding: 10px; background: #3a3f47; min-height: 200px;
+        }
+        #canvas {
+            max-width: 98%; max-height: 98%; cursor: crosshair;
+            border: 2px solid #0f3460; border-radius: 8px; box-shadow: 0 0 15px rgba(0,0,0,0.5);
+        }
+
+        /* ===== Bottom bar (all controls + box list) ===== */
+        .bottom-bar {
+            background: #16213e; border-top: 1px solid #0f3460; flex-shrink: 0;
+            display: flex; flex-direction: column; max-height: 55vh;
+        }
+
+        /* Info row */
+        .info-row {
+            display: flex; align-items: center; gap: 12px; padding: 6px 16px;
+            background: #0f3460; border-bottom: 1px solid #1a3a5e; flex-shrink: 0;
+        }
+        .info-row .image-name {
+            color: #e94560; font-weight: bold; font-size: 0.85rem; min-width: 120px;
+        }
+        .info-row .stats { font-size: 0.78rem; color: #aaa; }
+        .info-row .split-stats { font-size: 0.78rem; color: #e67e22; }
+
+        /* Button rows */
+        .btn-row {
+            display: flex; align-items: center; gap: 6px; padding: 5px 16px; flex-shrink: 0; flex-wrap: wrap;
+        }
+        .btn-row button {
+            padding: 5px 12px; border: none; border-radius: 5px; cursor: pointer;
+            font-size: 0.78rem; background: #0f3460; color: #eee; transition: all 0.12s;
+            white-space: nowrap;
+        }
+        .btn-row button:hover { background: #1a4a7a; }
+        .btn-row button.active { background: #e94560; color: white; }
+        .btn-row button.danger { background: #c0392b; color: white; }
+        .btn-row button.danger:hover { background: #a93226; }
+        .btn-row button.green { background: #2d8a4e; color: white; }
+        .btn-row button.green:hover { background: #24713f; }
+        .btn-row button.orange { background: #e67e22; color: white; }
+        .btn-row button.orange:hover { background: #d0691a; }
+        .btn-row button.gray { background: #555; color: white; }
+        .btn-row .key-hint { font-size: 0.65rem; color: #555; }
+
+        /* Box list */
+        .box-section { flex: 1; overflow: hidden; display: flex; flex-direction: column; border-top: 1px solid #0f3460; }
+        .box-section-header { padding: 5px 16px; font-size: 0.8rem; color: #aaa; background: #12122a; flex-shrink: 0; border-bottom: 1px solid #0f3460; }
+        .box-list {
+            flex: 1; overflow-y: auto; padding: 4px 16px; display: flex; flex-wrap: wrap; gap: 4px; align-content: flex-start;
+        }
+        .box-item {
+            padding: 4px 8px; background: #0f3460; border-radius: 4px; cursor: pointer;
+            font-size: 0.72rem; display: inline-flex; align-items: center; gap: 6px; transition: background 0.1s;
+        }
+        .box-item:hover { background: #1a4a7a; }
+        .box-item.selected { background: #e94560; color: white; }
+        .box-item .box-idx { color: #e94560; font-weight: bold; }
+        .box-item.selected .box-idx { color: #fff; }
+        .box-item .box-del {
+            cursor: pointer; color: #c0392b; font-weight: bold; font-size: 0.8rem; padding: 0 2px;
+        }
+        .box-item .box-del:hover { color: #e74c3c; }
+
+        /* Toast */
+        .toast {
+            position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+            background: #2d8a4e; color: white; padding: 6px 18px; border-radius: 6px;
+            font-size: 0.8rem; opacity: 0; transition: opacity 0.3s; z-index: 100;
+            pointer-events: none;
+        }
+        .toast.show { opacity: 1; }
+
+        ::-webkit-scrollbar { width: 5px; }
+        ::-webkit-scrollbar-track { background: #16213e; }
+        ::-webkit-scrollbar-thumb { background: #0f3460; border-radius: 3px; }
+
+        .loading {
+            position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.6);
+            display: none; align-items: center; justify-content: center; z-index: 200;
+            font-size: 1.1rem; color: #e94560;
+        }
+        .loading.show { display: flex; }
+        .empty-msg { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: #aaa; font-size: 1.2rem; }
+    </style>
+</head>
+<body>
+    <div class="loading" id="loading">加载中...</div>
+    <div class="toast" id="toast"></div>
+
+    <!-- Header -->
+    <div class="header">
+        <h1>🐗 野猪标注</h1>
+        <select id="datasetSelect" onchange="onDatasetChange()"></select>
+    </div>
+
+    <!-- Main -->
+    <div class="main">
+        <div class="sidebar">
+            <div class="sidebar-header">图片 <span class="count" id="imgCount">(0)</span></div>
+            <div class="image-list" id="imageList"></div>
+        </div>
+        <div class="workspace">
+            <div class="canvas-container" id="canvasContainer">
+                <canvas id="canvas"></canvas>
+                <div class="empty-msg" id="emptyMsg" style="display:none;"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Bottom bar: all controls + box info -->
+    <div class="bottom-bar">
+        <!-- Row 0: Image name + stats -->
+        <div class="info-row">
+            <span class="image-name" id="imageName">—</span>
+            <span class="stats" id="stats">0 / 0</span>
+            <span class="split-stats" id="splitStats" style="display:none;">—</span>
+        </div>
+
+        <!-- Row 1: Drawing tools -->
+        <div class="btn-row">
+            <button id="drawBtn" class="active">✏️ 画框</button>
+            <button id="selectBtn">👆 选择</button>
+            <button id="deleteBtn" class="danger">🗑 删除选中</button>
+            <span class="key-hint">D=画框 ↑↓=切换/移动 Delete=删除框 Shift+方向=微调</span>
+        </div>
+
+        <!-- Row 2: Navigation + Save -->
+        <div class="btn-row">
+            <button id="prevBtn">◀ 上一张</button>
+            <button id="nextBtn">下一张 ▶</button>
+            <button id="saveBtn" style="background:#e94560;color:white;">💾 保存</button>
+            <button id="reviewBtn" class="green" style="display:none;">✅ 已审核 → merged</button>
+            <span id="splitAssign" style="display:none;gap:4px;">
+                <button id="assignTrainBtn" class="green">🚂 train</button>
+                <button id="assignValBtn" class="orange">🔶 val</button>
+                <button id="assignTestBtn" style="background:#8e44ad;color:white;">🟣 test</button>
+                <button id="unassignBtn" class="gray">✕ 取消</button>
+            </span>
+            <button id="deleteImgBtn" class="danger" style="display:none;">🗑 删除此图</button>
+            <span id="status" style="margin-left:auto;font-size:0.75rem;color:#666;">就绪</span>
+        </div>
+
+        <!-- Row 3: Box list -->
+        <div class="box-section">
+            <div class="box-section-header">标注框 <span id="boxCount">(0)</span></div>
+            <div class="box-list" id="boxList">
+                <div style="color:#555;font-size:0.75rem;">暂无标注框 — 点击画框后在图上拖拽</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentDataset = 'manual';
+        let currentSplit = 'train';
+        let images = [];
+        let currentIndex = -1;
+        let boxes = [];
+        let selectedBox = -1;
+        let mode = 'draw';
+        let drawing = false;
+        let drawStart = null;
+        let img = null;
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        let datasets = {};
+        let isSaving = false;
+        let imgReady = false;
+        let boxesReady = false;
+
+        function getScale() {
+            const rect = canvas.getBoundingClientRect();
+            return { x: canvas.width / rect.width, y: canvas.height / rect.height };
+        }
+        function toCanvasCoords(e) {
+            const rect = canvas.getBoundingClientRect();
+            const scale = getScale();
+            return { x: (e.clientX - rect.left) * scale.x, y: (e.clientY - rect.top) * scale.y };
+        }
+        function showLoading(v) { document.getElementById('loading').classList.toggle('show', v); }
+        function showToast(msg, err) {
+            const el = document.getElementById('toast');
+            el.textContent = msg;
+            el.style.background = err ? '#c0392b' : '#2d8a4e';
+            el.classList.add('show');
+            setTimeout(() => el.classList.remove('show'), 2000);
+        }
+
+        // ===== Datasets =====
+        async function loadDatasets() {
+            const res = await fetch('/api/datasets');
+            datasets = await res.json();
+            // 支持 ?ds=xxx 深链指定数据集
+            const q = new URLSearchParams(location.search).get('ds');
+            if (q && datasets[q]) currentDataset = q;
+            const sel = document.getElementById('datasetSelect');
+            sel.innerHTML = '';
+            for (const [id, info] of Object.entries(datasets)) {
+                const opt = document.createElement('option');
+                opt.value = id; opt.textContent = info.label; sel.appendChild(opt);
+            }
+            sel.value = currentDataset;
+            currentSplit = datasets[currentDataset].default_split;
+        }
+        function onDatasetChange() {
+            const sel = document.getElementById('datasetSelect');
+            currentDataset = sel.value;
+            currentSplit = datasets[currentDataset].default_split;
+            currentIndex = -1;
+            loadImageList();
+        }
+
+        // ===== Image List =====
+        async function loadImageList() {
+            showLoading(true);
+            try {
+                const res = await fetch(`/api/images/${currentDataset}/${currentSplit}`);
+                images = await res.json();
+                document.getElementById('imgCount').textContent = `(${images.length})`;
+                renderImageList();
+                if (images.length > 0) { currentIndex = 0; await loadImage(0); }
+                else { showEmptyMsg('暂无图片'); }
+            } catch(e) { showToast('加载失败', true); }
+            showLoading(false);
+        }
+
+        function renderImageList() {
+            const list = document.getElementById('imageList');
+            list.innerHTML = '';
+            images.forEach((im, idx) => {
+                const item = document.createElement('div');
+                item.className = 'image-item' + (idx === currentIndex ? ' active' : '');
+                const ns = document.createElement('span');
+                ns.textContent = im.name; item.appendChild(ns);
+                const badge = document.createElement('span');
+                if (im.split_tag === 'train') { badge.className = 'badge'; badge.textContent = 'T'; }
+                else if (im.split_tag === 'val') { badge.className = 'badge val'; badge.textContent = 'V'; }
+                else if (im.split_tag === 'unassigned') { badge.className = 'badge unassigned'; badge.textContent = '?'; }
+                else if (im.has_label) { badge.className = 'badge'; badge.textContent = '✓'; }
+                else { badge.className = 'badge empty'; badge.textContent = '空'; }
+                item.appendChild(badge);
+                item.onclick = () => loadImage(idx);
+                list.appendChild(item);
+            });
+            const active = list.querySelector('.active');
+            if (active) active.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        }
+
+        // ===== Load Image =====
+        function showEmptyMsg(text) {
+            // 用覆盖层提示，不销毁 canvas（销毁后画布会脱离 DOM，图片画不上）
+            const em = document.getElementById('emptyMsg');
+            const c = document.getElementById('canvas');
+            if (em) { em.textContent = text; em.style.display = 'flex'; }
+            if (c) c.style.display = 'none';
+        }
+        async function loadImage(idx) {
+            if (idx < 0 || idx >= images.length) return;
+            currentIndex = idx;
+            const imgData = images[idx];
+
+            // 恢复画布可见（切数据集或审完后可能被 emptyMsg 覆盖）
+            const em = document.getElementById('emptyMsg');
+            if (em) em.style.display = 'none';
+            document.getElementById('canvas').style.display = 'block';
+
+            // 立即清空画布和框，防止显示上一张残留
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            boxes = [];
+            selectedBox = -1;
+            imgReady = false;
+            boxesReady = false;
+            renderBoxList();
+            updateStatus();
+            document.getElementById('imageName').textContent = '加载中...';
+
+            // 双方就绪才画
+            function tryDraw() { if (imgReady && boxesReady) draw(); }
+            document.getElementById('stats').textContent = `${idx + 1} / ${images.length}`;
+
+            const reviewBtn = document.getElementById('reviewBtn');
+            // 审核通过按钮：在 merged 之外的所有数据集上显示（frames/pukou_img/yewei_img/auto_*）
+            reviewBtn.style.display = currentDataset !== 'merged' ? 'inline-block' : 'none';
+
+            // 删除按钮：在 non-merged 数据集上显示
+            const delBtn = document.getElementById('deleteImgBtn');
+            delBtn.style.display = currentDataset !== 'merged' ? 'inline-block' : 'none';
+
+            const sa = document.getElementById('splitAssign');
+            const isMerged = currentDataset === 'merged';
+            sa.style.display = isMerged ? 'inline-flex' : 'none';
+            document.getElementById('splitStats').style.display = isMerged ? 'inline-block' : 'none';
+            if (isMerged) updateSplitStatus();
+
+            renderImageList();
+
+            img = new Image();
+            img.onload = () => { canvas.width = img.width; canvas.height = img.height; document.getElementById('imageName').textContent = imgData.name; imgReady = true; tryDraw(); };
+            img.src = `/api/images/${currentDataset}/${currentSplit}/${encodeURIComponent(imgData.name)}`;
+
+            try {
+                const res = await fetch(`/api/labels/${currentDataset}/${currentSplit}/${encodeURIComponent(imgData.name)}`);
+                boxes = await res.json();
+            } catch(e) { boxes = []; }
+            boxesReady = true;
+            selectedBox = -1;
+            renderBoxList();
+            tryDraw();  // 框就绪，尝试画（如果图片也好了就直接画）
+            updateStatus();
+        }
+
+        // ===== Drawing =====
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            if (img) ctx.drawImage(img, 0, 0);
+            if (drawing && drawStart) {
+                ctx.strokeStyle = '#ff0'; ctx.lineWidth = 2; ctx.setLineDash([5,5]);
+                ctx.strokeRect(drawStart.x, drawStart.y, drawStart.w, drawStart.h);
+                ctx.setLineDash([]);
+            }
+            boxes.forEach((box, idx) => {
+                const x1 = (box.x_center - box.width / 2) * canvas.width;
+                const y1 = (box.y_center - box.height / 2) * canvas.height;
+                const w = box.width * canvas.width;
+                const h = box.height * canvas.height;
+                const isSel = idx === selectedBox;
+                ctx.strokeStyle = isSel ? '#aa44ff' : '#e94560';
+                ctx.lineWidth = isSel ? 6 : 5;
+                ctx.strokeRect(x1, y1, w, h);
+                ctx.fillStyle = isSel ? 'rgba(170,68,255,0.2)' : 'rgba(233,69,96,0.15)';
+                ctx.fillRect(x1, y1, w, h);
+                ctx.fillStyle = isSel ? '#aa44ff' : '#e94560';
+                ctx.font = 'bold 14px sans-serif';
+                ctx.fillText(`boar #${idx+1}`, x1+2, y1-4);
+            });
+        }
+
+        function renderBoxList() {
+            const list = document.getElementById('boxList');
+            document.getElementById('boxCount').textContent = `(${boxes.length})`;
+            if (boxes.length === 0) {
+                list.innerHTML = '<div style="color:#555;font-size:0.75rem;">暂无标注框 — 点击画框后在图上拖拽</div>';
+                return;
+            }
+            list.innerHTML = boxes.map((b, i) => {
+                const w = (b.width * 100).toFixed(1);
+                const h = (b.height * 100).toFixed(1);
+                const xc = (b.x_center * 100).toFixed(0);
+                const yc = (b.y_center * 100).toFixed(0);
+                // 置信度：有值显示概率，无值（手工新画）显示 —
+                const confTxt = (b.conf == null) ? '—' : b.conf.toFixed(2);
+                const confColor = (b.conf != null && b.conf < 0.5) ? '#e94560' : '#4a9e5f';
+                return `<div class="box-item${i === selectedBox ? ' selected' : ''}" onclick="selectBox(${i})">
+                    <span class="box-idx">#${i+1}</span>
+                    <span>boar ${w}×${h}</span>
+                    <span style="color:${confColor};font-weight:bold">${confTxt}</span>
+                    <span style="color:#888">(${xc},${yc})</span>
+                    <span class="box-del" onclick="event.stopPropagation();deleteBox(${i})">✕</span>
+                </div>`;
+            }).join('');
+        }
+
+        function selectBox(idx) { selectedBox = idx; renderBoxList(); draw(); }
+        function deleteBox(idx) { boxes.splice(idx, 1); if (selectedBox >= idx) selectedBox = -1; renderBoxList(); draw(); updateStatus(); }
+        function updateStatus() {
+            const empty = boxes.length === 0 ? ' ⚠️ 空' : '';
+            document.getElementById('status').textContent = `${currentIndex+1}/${images.length} | ${boxes.length} 框${empty}`;
+        }
+
+        // ===== Navigation =====
+        function goPrev() { if (currentIndex > 0) loadImage(currentIndex - 1); }
+        function goNext() { if (currentIndex < images.length - 1) loadImage(currentIndex + 1); }
+
+        // ===== Save =====
+        async function saveLabels() {
+            if (isSaving) return;
+            isSaving = true;
+            const btn = document.getElementById('saveBtn');
+            const imgData = images[currentIndex];
+            btn.textContent = '⏳'; btn.disabled = true;
+            try {
+                const res = await fetch(`/api/labels/${currentDataset}/${currentSplit}/${encodeURIComponent(imgData.name)}`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(boxes)
+                });
+                const data = await res.json();
+                if (data.success) {
+                    const r = await fetch(`/api/labels/${currentDataset}/${currentSplit}/${encodeURIComponent(imgData.name)}`);
+                    boxes = await r.json();
+                    selectedBox = -1; renderBoxList(); draw(); updateStatus();
+                    images[currentIndex].has_label = boxes.length > 0;
+                    renderImageList();
+                    showToast(`✅ 已保存 (${data.box_count} 框)`);
+                }
+            } catch(e) { showToast('❌ 保存失败', true); }
+            btn.textContent = '💾 保存'; btn.disabled = false;
+            isSaving = false;
+        }
+
+        // ===== Review / Split =====
+        document.getElementById('reviewBtn').onclick = async () => {
+            if (currentIndex < 0) return;
+            const imgData = images[currentIndex];
+            const btn = document.getElementById('reviewBtn');
+            btn.textContent = '⏳'; btn.disabled = true;
+            try {
+                await fetch(`/api/labels/${currentDataset}/${currentSplit}/${encodeURIComponent(imgData.name)}`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(boxes)
+                });
+                const mr = await fetch(`/api/move_to_merged/${currentDataset}/${currentSplit}/${encodeURIComponent(imgData.name)}`, { method: 'POST' });
+                const md = await mr.json();
+                if (!mr.ok) { showToast(`⚠️ ${md.error||'移动失败'}`, true); btn.textContent='✅ 已审核→merged'; btn.disabled=false; return; }
+                showToast(`✅ 已移到 merged`);
+                images.splice(currentIndex, 1);
+                renderImageList();
+                if (images.length === 0) {
+                    document.getElementById('imageName').textContent = '—';
+                    document.getElementById('stats').textContent = '0/0';
+                    document.getElementById('reviewBtn').style.display = 'none';
+                    showEmptyMsg('全部审核完成 🎉');
+                    return;
+                }
+                await loadImage(Math.min(currentIndex, images.length - 1));
+            } catch(e) { showToast(`❌ ${e.message}`, true); }
+            btn.textContent = '✅ 已审核 → merged'; btn.disabled = false;
+        };
+
+        async function updateSplitStatus() {
+            try { const r=await fetch('/api/split/status'); const d=await r.json();
+                document.getElementById('splitStats').textContent = `T:${d.train} V:${d.val} Te:${d.test} 未分:${d.unassigned}`;
+            } catch(e){}
+        }
+        async function assignToSplit(tag) {
+            if (currentIndex < 0) return;
+            const img = images[currentIndex];
+            const r = await fetch(`/api/split/add/${tag}/${encodeURIComponent(img.name)}`,{method:'POST'});
+            const d = await r.json();
+            if (d.success) { showToast(`🚂 已归入 ${tag}`); img.split_tag=tag; renderImageList(); updateSplitStatus(); }
+        }
+        async function unassignSplit() {
+            if (currentIndex < 0) return;
+            const img = images[currentIndex];
+            const r = await fetch(`/api/split/remove/${encodeURIComponent(img.name)}`,{method:'POST'});
+            const d = await r.json();
+            if (d.success) { showToast('✕ 已取消'); img.split_tag='unassigned'; renderImageList(); updateSplitStatus(); }
+        }
+
+        // ===== Events =====
+        function setupEvents() {
+            document.getElementById('prevBtn').onclick = goPrev;
+            document.getElementById('nextBtn').onclick = goNext;
+            document.getElementById('saveBtn').onclick = saveLabels;
+            document.getElementById('drawBtn').onclick = () => {
+                mode='draw'; document.getElementById('drawBtn').classList.add('active');
+                document.getElementById('selectBtn').classList.remove('active'); canvas.style.cursor='crosshair';
+            };
+            document.getElementById('selectBtn').onclick = () => {
+                mode='select'; document.getElementById('drawBtn').classList.remove('active');
+                document.getElementById('selectBtn').classList.add('active'); canvas.style.cursor='pointer';
+            };
+            document.getElementById('deleteBtn').onclick = () => {
+                if (selectedBox >= 0) { boxes.splice(selectedBox,1); selectedBox=-1; renderBoxList(); draw(); updateStatus(); }
+            };
+            document.getElementById('assignTrainBtn').onclick = () => assignToSplit('train');
+            document.getElementById('assignValBtn').onclick = () => assignToSplit('val');
+            document.getElementById('assignTestBtn').onclick = () => assignToSplit('test');
+            document.getElementById('unassignBtn').onclick = unassignSplit;
+
+            canvas.addEventListener('mousedown', (e) => {
+                const c = toCanvasCoords(e);
+                if (mode === 'draw') { drawing=true; drawStart={x:c.x,y:c.y}; }
+                else {
+                    selectedBox=-1;
+                    for (let i=boxes.length-1; i>=0; i--) {
+                        const b=boxes[i];
+                        const x1=(b.x_center-b.width/2)*canvas.width, y1=(b.y_center-b.height/2)*canvas.height;
+                        const x2=x1+b.width*canvas.width, y2=y1+b.height*canvas.height;
+                        if (c.x>=x1&&c.x<=x2&&c.y>=y1&&c.y<=y2) { selectedBox=i; break; }
+                    }
+                    renderBoxList(); draw();
+                }
+            });
+            canvas.addEventListener('mousemove', (e) => {
+                if (drawing && drawStart) { const c=toCanvasCoords(e); drawStart.w=c.x-drawStart.x; drawStart.h=c.y-drawStart.y; draw(); }
+            });
+            canvas.addEventListener('mouseup', (e) => {
+                if (drawing && drawStart) {
+                    const c = toCanvasCoords(e);
+                    const x1=Math.min(drawStart.x,c.x), y1=Math.min(drawStart.y,c.y);
+                    const x2=Math.max(drawStart.x,c.x), y2=Math.max(drawStart.y,c.y);
+                    const w=x2-x1, h=y2-y1;
+                    if (w>10 && h>10) {
+                        boxes.push({class_id:0,
+                            x_center:Math.max(0,Math.min(1,(x1+x2)/2/canvas.width)),
+                            y_center:Math.max(0,Math.min(1,(y1+y2)/2/canvas.height)),
+                            width:Math.max(0.01,Math.min(1,w/canvas.width)),
+                            height:Math.max(0.01,Math.min(1,h/canvas.height))
+                        });
+                        renderBoxList(); updateStatus();
+                    }
+                }
+                drawing=false; drawStart=null; draw();
+            });
+
+            // Delete current image
+            document.getElementById('deleteImgBtn').onclick = async () => {
+                if (currentIndex < 0) return;
+                const imgData = images[currentIndex];
+                if (!confirm(`确定删除 ${imgData.name} ？\n此操作不可恢复。`)) return;
+
+                const btn = document.getElementById('deleteImgBtn');
+                btn.textContent = '⏳'; btn.disabled = true;
+                try {
+                    const res = await fetch(`/api/delete_image/${currentDataset}/${currentSplit}/${encodeURIComponent(imgData.name)}`, { method: 'POST' });
+                    const data = await res.json();
+                    if (!data.success) { showToast('❌ 删除失败', true); btn.textContent='🗑 删除此图'; btn.disabled=false; return; }
+                    showToast(`🗑 已删除 ${imgData.name}`);
+                    images.splice(currentIndex, 1);
+                    renderImageList();
+                    if (images.length === 0) {
+                        document.getElementById('imageName').textContent = '—';
+                        document.getElementById('stats').textContent = '0/0';
+                        showEmptyMsg('无图片');
+                        document.getElementById('deleteImgBtn').style.display = 'none';
+                        return;
+                    }
+                    await loadImage(Math.min(currentIndex, images.length - 1));
+                } catch(e) { showToast('❌ 删除失败', true); }
+                btn.textContent = '🗑 删除此图'; btn.disabled = false;
+            };
+
+            // Keyboard
+            document.addEventListener('keydown', (e) => {
+                if (e.target.tagName==='INPUT'||e.target.tagName==='SELECT'||e.target.tagName==='TEXTAREA') return;
+                switch (e.key) {
+                    case 'ArrowUp': case 'ArrowDown': case 'ArrowLeft': case 'ArrowRight':
+                        e.preventDefault();
+                        if (selectedBox >= 0 && boxes[selectedBox]) {
+                            // 选中框时，方向键移动框
+                            const box = boxes[selectedBox];
+                            const step = e.shiftKey ? 0.002 : 0.01; // Shift+方向键微调
+                            switch (e.key) {
+                                case 'ArrowUp':    box.y_center = Math.max(0, box.y_center - step); break;
+                                case 'ArrowDown':  box.y_center = Math.min(1, box.y_center + step); break;
+                                case 'ArrowLeft':  box.x_center = Math.max(0, box.x_center - step); break;
+                                case 'ArrowRight': box.x_center = Math.min(1, box.x_center + step); break;
+                            }
+                            renderBoxList(); draw(); updateStatus();
+                        } else {
+                            // 无选中框时，方向键切换图片
+                            if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') goPrev();
+                            else goNext();
+                        }
+                        break;
+                    case 's': case 'S': if (e.ctrlKey||e.metaKey) { e.preventDefault(); saveLabels(); } break;
+                    case 'Delete': if (selectedBox>=0) { boxes.splice(selectedBox,1); selectedBox=-1; renderBoxList(); draw(); updateStatus(); } break;
+                    case 'd': case 'D': if (!e.ctrlKey&&!e.metaKey) document.getElementById('drawBtn').click(); break;
+                    case 'Enter': {
+                        // 审核通过并自动跳到下一张（只在非 merged 数据集生效）
+                        const rb = document.getElementById('reviewBtn');
+                        if (rb.style.display !== 'none') rb.click();
+                        break;
+                    }
+                }
+            });
+        }
+
+        async function init() {
+            await loadDatasets();
+            setupEvents();
+            await loadImageList();
+        }
+        init();
+    </script>
+</body>
+</html>
